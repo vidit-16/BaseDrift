@@ -27,6 +27,10 @@ Groq free tier. No credit card. console.groq.com
     src/pipeline.py         run_case() — end to end, returns audit dict.
                             `python src/pipeline.py` runs the hero demo.
                             Refuses to run without GROQ_API_KEY, by design.
+    eval/rules_eval.py      scores the DECISION ENGINE only, from case features.
+                            No LLM. Always reports against a null baseline
+                            because accuracy alone is 100% for doing nothing.
+                            --sweep shows R4 threshold sensitivity.
     eval/ablation.py        semantics vs keyword ablation on a SEMANTICS-ONLY
                             prompt: 14/14 vs 0/14 on gpt-oss-120b, 2026-08-27.
                             Not the extractor's prompt. Score is model-dependent.
@@ -47,6 +51,11 @@ Groq free tier. No credit card. console.groq.com
 - Callback always goes to vendor.known_phone, never a number in the email.
   (This one IS enforced — verifier.py reads vendor.known_phone directly.)
 - Inconclusive -> STEP_UP, never ALLOW. "couldn't check" != "clean".
+- Signal has FOUR states. INCONCLUSIVE ("could not check") is not WARN
+  ("checked, looks wrong"). Both hold a payout; only WARN may contribute to
+  a BLOCK. Never let missing data push a case toward rejection.
+- Never report accuracy on cases_*.csv without the null baseline beside it.
+  A do-nothing pipeline scores 100%/100%; the real metric is step-up rate.
 - "Couldn't evaluate" is not "caught". An R1 hold is correct policy but is
   never scored as a detection — run_case() sets correct=None, scored=False.
 - The holdout is scored once, at the end, and reported with its size.
@@ -86,21 +95,40 @@ P0.3  decide() and run_case() take destination_account_number, resolved from the
       claim and records provenance in Decision.destination_source.
 P0.4  _hedged() matches the concept inside normalised field names. "gst_number"
       and "gst" were both missed before and failed open.
+P0.5  Signal gained INCONCLUSIVE. WARN meant both "looks wrong" and "could not
+      check"; only the former should reach a BLOCK. Reclassifying continuity's
+      unresolved case briefly reopened the R2 bypass — the regression test from
+      P0.1 caught it. R2 now holds on anything that is not a clean PASS.
 
-All four have regression tests in tests/test_decision_engine.py (17 tests, no API
+All five have regression tests in tests/test_decision_engine.py (22 tests, no API
 key). Verified they fail against the pre-P0 engine — do not assume a green run
 means anything until you have checked a test can fail.
 
 Then:
-1. case -> email renderer. BLOCKS eval/scorer.py: cases_*.csv hold feature
+1. generator variance. The dataset is FOUR distinct feature patterns wearing
+   800 costumes — every case in a scenario is identical but for random digits,
+   so effective n=4. Nothing can be tuned against it: R4's threshold gives
+   identical accuracy at 1 and at 5. Needed, derived from the threat model and
+   committed BEFORE touching R4, or we author exam and student together again:
+     - fraud_hard near-misses carrying only 1 Tier-2 warn
+     - legit_hard variants carrying 2 (a busy but legitimate vendor)
+     - cross-contact reuse (the FAIL branch has zero coverage)
+     - FAV unavailable (name_match_score None) and non-active account_status
+2. R4 weighting. Only after 1. urgency currently counts the same as a lookalike
+   domain, and urgency is exactly what legit_hard fires on — it sits ONE warn
+   below the BLOCK threshold, so "please reply on this thread" flips a genuine
+   vendor to rejected.
+3. case -> email renderer. BLOCKS the extraction eval: cases_*.csv hold feature
    rows with no message text, and run_case() takes email_text. Must not leak
    the keyword baseline's trigger vocabulary — see the README's v1 note.
-2. eval/scorer.py — run the pipeline over data/cases_dev.csv, tune thresholds.
-   Extraction is non-deterministic, so a single pass is one sample: report a run
-   count and spread, not a bare number, and re-check any threshold across runs.
-3. webhook handler for payout.pending
-4. unit tests for extractor / verifier / pipeline. decision_engine is done
-   (17 regression tests). Extractor tests must not depend on live output —
+4. extraction eval — email text through the real extractor, compared against
+   the generator's features. Measures the EXTRACTOR; eval/rules_eval.py already
+   measures the rules. Keep them separate: rules tuning must stay instant and
+   deterministic. Cache extractions to disk so re-scoring costs nothing, and
+   remember extraction is non-deterministic — report a run count and spread.
+5. webhook handler for payout.pending
+6. unit tests for extractor / verifier / pipeline. decision_engine is done
+   (22 regression tests). Extractor tests must not depend on live output —
    it is non-deterministic; stub llm_client and assert on parsing/validation.
-5. dashboard
-6. holdout run (once) + pitch video
+7. dashboard
+8. holdout run (once) + pitch video

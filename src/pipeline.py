@@ -188,10 +188,12 @@ def summarize(audit: Dict[str, Any]) -> str:
         note = ("payout fund account" if src == "razorpay_payout"
                 else "UNVERIFIED — self-reported in the request")
         L.append(f"  dest     : {d['checked_destination']}  ({note})")
-    for s in d.get("tier1", []):
-        L.append(f"  T1 {s['result']:4s} {s['name']:20s} {s['detail']}")
-    for s in d.get("tier2", []):
-        L.append(f"  T2 {s['result']:4s} {s['name']:20s} {s['detail']}")
+    # INCONCLUSIVE is 12 chars; keep the columns aligned so the signal table
+    # stays readable in the demo.
+    for tier in ("tier1", "tier2"):
+        tag = "T1" if tier == "tier1" else "T2"
+        for s in d.get(tier, []):
+            L.append(f"  {tag} {s['result']:12s} {s['name']:20s} {s['detail']}")
 
     L.append(f"  decision : {d['outcome']}  [{d['rule_fired']}]")
     L.append(f"             {d['reason']}")

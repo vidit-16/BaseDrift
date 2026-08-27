@@ -180,19 +180,23 @@ def test_hedge_detected_across_model_spellings():
     """
     All of these were observed from the model for one concept. The old exact
     tuple ("gstin","proposed_gstin") missed the rest, and a missed hedge is one
-    fewer WARN — it failed OPEN.
+    fewer non-clean signal — it failed OPEN.
+
+    A hedge is INCONCLUSIVE, not WARN: "should be the same as before" is a
+    weaker claim, not adverse evidence. Both hold the payout; only WARN may
+    contribute to a BLOCK.
     """
-    from decision_engine import check_gstin, WARN
+    from decision_engine import check_gstin, INCONCLUSIVE
     for spelling in ("gstin", "proposed_gstin", "GSTIN", "gst_number",
                      "gst", "proposed_gstin_value"):
         sig = check_gstin(ext(hedged_fields=[spelling]), VENDOR)
-        assert sig.result == WARN, f"hedge missed for spelling {spelling!r}"
+        assert sig.result == INCONCLUSIVE, f"hedge missed for spelling {spelling!r}"
 
 
 def test_hedging_without_named_field_is_treated_as_hedged():
-    from decision_engine import check_gstin, WARN
+    from decision_engine import check_gstin, INCONCLUSIVE
     e = ext(hedged_fields=[], hedging_detected=True)
-    assert check_gstin(e, VENDOR).result == WARN
+    assert check_gstin(e, VENDOR).result == INCONCLUSIVE
 
 
 def test_unhedged_matching_gstin_passes():
@@ -206,6 +210,61 @@ def test_unrelated_hedge_does_not_warn_gstin():
     from decision_engine import check_gstin, PASS
     e = ext(hedged_fields=["amount"], hedging_detected=True)
     assert check_gstin(e, VENDOR).result == PASS
+
+
+# ── Missing data must never cause a rejection ────────────────────────
+# WARN carried two meanings: "looks wrong" and "could not check". Both hold a
+# payout; only the first is evidence and may contribute to a BLOCK.
+
+def test_missing_amount_is_inconclusive_not_adverse():
+    """A message that omits an amount has LESS information, not worse."""
+    from decision_engine import check_payment_pattern, INCONCLUSIVE
+    sig = check_payment_pattern(ext(amount=None), VENDOR)
+    assert sig.result == INCONCLUSIVE
+
+
+def test_missing_amount_cannot_push_a_case_into_block():
+    """
+    Regression on the hero case's third warn. With a lookalike domain and
+    urgency (2 real warns) plus a missing amount, the old engine counted three
+    and blocked. The missing amount must not be one of them.
+    """
+    from decision_engine import WARN, INCONCLUSIVE
+    e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+            account=NEW_ACCT, domain="balaj1logistic.com", urgency=True,
+            amount=None)
+    d = run(e, dest=NEW_ACCT)
+    warns = [s.name for s in d.tier2 if s.result == WARN]
+    incon = [s.name for s in d.tier2 if s.result == INCONCLUSIVE]
+    assert "payment_pattern" in incon, "missing amount still counted as adverse"
+    assert "payment_pattern" not in warns
+
+
+def test_deviating_amount_is_still_adverse():
+    """Guard the other direction: a real deviation must still WARN."""
+    from decision_engine import check_payment_pattern, WARN
+    assert check_payment_pattern(ext(amount=500000.0), VENDOR).result == WARN
+
+
+def test_inconclusive_signals_still_hold_the_payout():
+    """Fail-safe intact: less information must never mean release."""
+    e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+            account=KNOWN_ACCT, gstin=None)      # no GSTIN -> INCONCLUSIVE
+    d = run(e, dest=KNOWN_ACCT)
+    assert d.outcome == STEP_UP
+    assert d.payout_allowed is False
+
+
+def test_unresolvable_destination_on_followup_still_holds():
+    """
+    Regression: reclassifying the unresolved destination from WARN to
+    INCONCLUSIVE briefly made R2 fall through to ALLOW.
+    """
+    from decision_engine import INCONCLUSIVE
+    d = run(ext(intent=INTENT_FOLLOWUP, account=None), dest=None)
+    assert d.outcome == STEP_UP
+    assert d.payout_allowed is False
+    assert d.tier1[0].result == INCONCLUSIVE
 
 
 # ── Guards on behaviour that must NOT have changed ───────────────────

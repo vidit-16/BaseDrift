@@ -51,10 +51,24 @@ TIER 1 — identity binding (against vendor master, never against request)
 
 TIER 2 — contextual signals (supporting evidence, never decisive alone)
 
-  sender_domain:          match PASS / mismatch WARN
+  sender_domain:          match PASS / mismatch WARN / not found INCONCLUSIVE
   urgency:                absent PASS / present WARN
   channel_manipulation:   absent PASS / present WARN
-  payment_pattern:        within 15% of avg and no flags PASS, else WARN
+  payment_pattern:        within 15% of avg and no flags PASS
+                          deviation or a split/near-duplicate flag  WARN
+                          no amount stated  INCONCLUSIVE
+
+SIGNAL STATES — four, not three
+  PASS          checked, clean
+  WARN          checked, adverse evidence
+  INCONCLUSIVE  could not check
+  FAIL          checked, direct conflict with the vendor master
+
+  WARN used to carry both "looks wrong" and "could not check". Both must hold a
+  payout, but only adverse evidence may contribute to a BLOCK. Under the old
+  scheme a message that simply omitted an amount gained a risk signal, which
+  pushed cases toward rejection for having less information rather than worse
+  information. R4 counts WARN only; R5 and R6 hold on either.
 
 ═══════════════════════════════════════════════════════════════════════
 DECISION POLICY — first match wins
@@ -83,12 +97,13 @@ DECISION POLICY — first match wins
   3. any Tier 1 FAIL                            BLOCK
 
   4. REPLACE + new account + >=2 Tier 2 WARN    BLOCK
+     (WARN only — INCONCLUSIVE signals never contribute to a rejection)
      the BEC pattern: cut off the old destination, under pressure,
      from an unverified channel
 
-  5. any Tier 1 WARN                            STEP_UP
+  5. any Tier 1 WARN or INCONCLUSIVE            STEP_UP
 
-  6. any Tier 2 WARN                            STEP_UP
+  6. any Tier 2 WARN or INCONCLUSIVE            STEP_UP
 
   7. all PASS                                   ALLOW
 
@@ -122,7 +137,15 @@ NAME_SCORE_PASS  = 85
 NAME_SCORE_WARN  = 60
 AMOUNT_TOLERANCE = 0.15
 
+# Four states, not three. WARN was carrying two incompatible meanings:
+# "I checked this and it looks wrong" and "I could not check this". Both must
+# hold a payout, but only the first is EVIDENCE OF FRAUD and may contribute to
+# a BLOCK. Conflating them let missing data push a case toward rejection.
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
+INCONCLUSIVE = "INCONCLUSIVE"
+
+# Anything that is not a clean pass blocks an automatic ALLOW.
+NOT_CLEAN = (WARN, INCONCLUSIVE, FAIL)
 
 
 # ── Data ──────────────────────────────────────────────────────────────
@@ -236,7 +259,7 @@ def _hedged(hedged_fields: List[str], *concepts: str) -> bool:
 
 def check_name_match(fav: FAVResult) -> Signal:
     if fav.name_match_score is None:
-        return Signal("name_match", 1, WARN,
+        return Signal("name_match", 1, INCONCLUSIVE,
                       "FAV unavailable — no name evidence. Inconclusive, not clean.",
                       "razorpay_fav")
     s = fav.name_match_score
@@ -264,7 +287,7 @@ def check_account_status(fav: FAVResult) -> Signal:
         return Signal("account_status", 1, FAIL,
                       "bank reports the account inactive — it cannot receive",
                       "razorpay_fav")
-    return Signal("account_status", 1, WARN,
+    return Signal("account_status", 1, INCONCLUSIVE,
                   f"account status {st or 'missing'!r} — FAV inconclusive, not clean",
                   "razorpay_fav")
 
@@ -272,20 +295,20 @@ def check_account_status(fav: FAVResult) -> Signal:
 def check_gstin(ext: ExtractionResult, v: VendorRecord) -> Signal:
     proposed = ext.proposed_gstin
     if proposed is None:
-        return Signal("gstin", 1, WARN, "no GSTIN in request", "email_body")
+        return Signal("gstin", 1, INCONCLUSIVE, "no GSTIN in request", "email_body")
     if proposed.upper() != v.gstin.upper():
         return Signal("gstin", 1, FAIL,
                       f"mismatch: {proposed} vs master {v.gstin}",
                       "email_body vs vendor_master")
     if _hedged(ext.hedged_fields, "gst"):
-        return Signal("gstin", 1, WARN,
+        return Signal("gstin", 1, INCONCLUSIVE,
                       f"{proposed} matches but the claim was hedged",
                       "email_body vs vendor_master")
     if ext.hedging_detected and not ext.hedged_fields:
         # Hedging was detected but the model did not say where. Treat the GSTIN
         # claim as hedged: the cost is a callback, and "we cannot tell" resolving
         # to WARN is the same fail-safe direction as every other rule here.
-        return Signal("gstin", 1, WARN,
+        return Signal("gstin", 1, INCONCLUSIVE,
                       f"{proposed} matches, but hedging was detected with no field "
                       f"named — treated as hedged",
                       "email_body vs vendor_master")
@@ -307,7 +330,7 @@ def check_account_continuity(ext: ExtractionResult, v: VendorRecord,
     dest, src = resolve_destination(ext, destination_account_number)
 
     if dest is None:
-        return Signal("account_continuity", 1, WARN,
+        return Signal("account_continuity", 1, INCONCLUSIVE,
                       "no destination could be resolved — neither the payout's "
                       "fund account nor an account number in the request",
                       "unresolved")
@@ -340,7 +363,8 @@ def check_account_continuity(ext: ExtractionResult, v: VendorRecord,
 def check_domain(ext: ExtractionResult, v: VendorRecord) -> Signal:
     d = ext.sender_domain
     if d is None:
-        return Signal("sender_domain", 2, WARN, "sender domain not found", "email_header")
+        return Signal("sender_domain", 2, INCONCLUSIVE, "sender domain not found",
+                      "email_header")
     if d.lower() == v.known_domain.lower():
         return Signal("sender_domain", 2, PASS, f"{d} matches known domain",
                       "email_header vs vendor_master")
@@ -368,7 +392,9 @@ def check_channel_manipulation(ext: ExtractionResult) -> Signal:
 def check_payment_pattern(ext: ExtractionResult, v: VendorRecord,
                            near_duplicate=False, split_below=False) -> Signal:
     if ext.amount is None:
-        return Signal("payment_pattern", 2, WARN, "no amount found", "email_body")
+        return Signal("payment_pattern", 2, INCONCLUSIVE,
+                      "no amount stated — cannot compare against the vendor baseline",
+                      "email_body")
 
     flags = []
     if split_below:
@@ -436,7 +462,10 @@ def decide(ext: ExtractionResult,
                 tier1=[continuity],
                 checked_destination=dest, destination_source=dest_src,
             )
-        if continuity.result == WARN:
+        # WARN *or* INCONCLUSIVE. Only a clean PASS releases here — falling
+        # through to ALLOW on "could not resolve the destination" would reopen
+        # exactly the bypass this rule exists to close.
+        if continuity.result in (WARN, INCONCLUSIVE):
             return Decision(
                 outcome=STEP_UP,
                 rule_fired="R2b_followup_unverified_destination",
@@ -446,6 +475,16 @@ def decide(ext: ExtractionResult,
                 triggered_by=["account_continuity"],
                 tier1=[continuity],
                 needs_callback=True,
+                checked_destination=dest, destination_source=dest_src,
+            )
+        if continuity.result != PASS:      # unreachable today; stays fail-safe
+            return Decision(
+                outcome=STEP_UP,
+                rule_fired="R2b_followup_unverified_destination",
+                reason="Destination could not be positively confirmed: "
+                       + continuity.detail,
+                triggered_by=["account_continuity"],
+                tier1=[continuity], needs_callback=True,
                 checked_destination=dest, destination_source=dest_src,
             )
         return Decision(
@@ -475,9 +514,14 @@ def decide(ext: ExtractionResult,
     ]
 
     t1_fail = [s for s in t1 if s.result == FAIL]
-    t1_warn = [s for s in t1 if s.result == WARN]
+    # "Not clean" holds the payout (R5/R6). Only WARN — actual adverse evidence —
+    # counts toward R4's BLOCK. A case is never rejected for missing data.
+    t1_unclean = [s for s in t1 if s.result in (WARN, INCONCLUSIVE)]
+    t2_unclean = [s for s in t2 if s.result in (WARN, INCONCLUSIVE)]
     t2_warn = [s for s in t2 if s.result == WARN]
 
+    # A previously unseen destination is adverse evidence, not missing data —
+    # it stays a WARN and legitimately contributes to the BEC pattern.
     new_account = any(s.name == "account_continuity" and s.result == WARN for s in t1)
 
     # Rule 3 — hard identity conflict
@@ -509,26 +553,26 @@ def decide(ext: ExtractionResult,
         )
 
     # Rule 5 — Tier 1 inconclusive
-    if t1_warn:
+    if t1_unclean:
         return Decision(
             outcome=STEP_UP,
             rule_fired="R5_tier1_inconclusive",
             reason="Identity evidence inconclusive: "
-                   + "; ".join(f"{s.name} — {s.detail}" for s in t1_warn),
-            triggered_by=[s.name for s in t1_warn],
+                   + "; ".join(f"{s.name} — {s.detail}" for s in t1_unclean),
+            triggered_by=[s.name for s in t1_unclean],
             tier1=t1, tier2=t2,
             checked_destination=dest, destination_source=dest_src,
             needs_callback=True,
         )
 
     # Rule 6 — contextual risk
-    if t2_warn:
+    if t2_unclean:
         return Decision(
             outcome=STEP_UP,
             rule_fired="R6_contextual_risk",
             reason="Identity checks passed but contextual risk present: "
-                   + ", ".join(s.name for s in t2_warn),
-            triggered_by=[s.name for s in t2_warn],
+                   + ", ".join(s.name for s in t2_unclean),
+            triggered_by=[s.name for s in t2_unclean],
             tier1=t1, tier2=t2,
             checked_destination=dest, destination_source=dest_src,
             needs_callback=True,

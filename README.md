@@ -135,6 +135,7 @@ src/decision_engine.py  deterministic policy; full rule table in docstring
 src/verifier.py         callback to vendor-master contact; RazorpayX actions
 src/pipeline.py         run_case() end to end -> audit dict
 tests/                  decision_engine regression tests, no API key needed
+eval/rules_eval.py      decision-engine scoring vs baselines, no API key needed
 eval/ablation.py        semantic vs keyword ablation
 data/generate_data.py   seeded generator (seed 42)
 data/vendor_master.csv  120 vendors — the trusted record, committed
@@ -147,7 +148,8 @@ Quick start:
 ```
 pip install -r requirements.txt
 python data/generate_data.py   # vendor master + dev/holdout splits
-python tests/test_decision_engine.py   # 17 tests, no API key needed
+python tests/test_decision_engine.py   # 22 tests, no API key needed
+python eval/rules_eval.py             # rule scoring vs baselines, no API key
 python eval/ablation.py        # ablation; baseline half needs no API key
 
 $env:GROQ_API_KEY="gsk_..."    # PowerShell
@@ -180,6 +182,46 @@ and `vendor_master.csv` are committed; `cases_holdout.csv` is gitignored and
 regenerated on demand.
 
 **Known limitation, stated up front:** the narratives and the rules were authored by the same team, so they share one mental model of fraud. A blind spot would appear in both the exam and the student. The holdout measures generalization across cases, not across threat models.
+
+### Why this project does not report an accuracy number
+
+It would be 100%, and it would be worthless.
+
+Every case carries `callback_reaches_known_contact`, which the generator sets
+False for fraud and True for legitimate requests. The callback therefore
+separates the classes perfectly by itself. **A pipeline running no rules at all
+— holding every payout and phoning the vendor — scores 100% recall and 100%
+precision on this dataset.** Accuracy cannot tell that system apart from this
+one, so quoting it would be meaningless.
+
+What the rules actually buy is measured against that null baseline:
+
+| system | recall | precision | step-up rate |
+|---|---|---|---|
+| null — hold everything, no rules | 100% | 100% | **100%** |
+| block everything | 100% | 39.2% | 0% |
+| **PayeeProof** | **100%** | **100%** | **26.3%** |
+
+Same fraud capture, **74% fewer callbacks** — 411 fewer manual verifications
+across 558 cases. That is the rules' entire measurable contribution here, and it
+is an operational-cost claim rather than a detection claim.
+
+A second consequence: detection accuracy is **completely insensitive** to R4's
+Tier-2 threshold — 100%/100% whether it fires at 1 warn or 5. Step-up rate is
+not, moving from 26.3% to 46.4%. Tuning against accuracy would have been tuning
+against a flat surface.
+
+Reproduce both: `python eval/rules_eval.py` and `--sweep`.
+
+### What the dataset cannot yet do
+
+The generator emits one fixed feature pattern per scenario, so 558 dev cases are
+**four distinct tests** repeated with different random digits. Effective sample
+size is 4, not 558. Three rules have zero coverage: cross-contact account reuse,
+FAV unavailable, and any non-active `account_status`.
+
+`eval/rules_eval.py` prints this caveat under every run it produces, so the
+number cannot be quoted without it.
 
 ---
 
@@ -217,6 +259,18 @@ vendor's genuine account while the payout pointed elsewhere passed cleanly. The
 resolved destination now comes from the payout's fund account, the message's claim is
 a labelled fallback for offline analysis only, and every audit record states which of
 the two was validated.
+
+**Missing data was counted as evidence of fraud.** `Signal` had three states,
+and `WARN` was carrying two incompatible meanings: "I checked this and it looks
+wrong" and "I could not check this". A message that simply omitted an amount
+earned a Tier-2 risk signal, which fed R4's BLOCK threshold — so a case could be
+pushed toward rejection for carrying *less* information rather than worse
+information. That was the third of the three warns on the hero case.
+
+Signals now have four states, with `INCONCLUSIVE` distinct from `WARN`. Both
+still hold a payout — "couldn't check" must never read as "clean" — but only
+adverse evidence can contribute to a rejection. The hero case still blocks, now
+citing two real signals instead of three padded ones.
 
 **Hedge detection failed open on spelling.** `check_gstin` decided PASS-versus-WARN by
 testing `hedged_fields` against the exact tuple `("gstin", "proposed_gstin")`. The
