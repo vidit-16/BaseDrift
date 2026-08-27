@@ -5,11 +5,27 @@ The ONLY place an LLM touches the pipeline.
 
 Produces two things from one call:
   1. SEMANTIC layer  — intent / action / scope / pressure
-                        (validated by eval/ablation.py: 13/14 vs 0/14 keyword baseline)
   2. STRUCTURED claims — account, IFSC, GSTIN, domain, amount
 
-Neither is trusted as identity. The decision engine checks every
-identity-bearing field against the vendor master, never against this output.
+On the ablation figure: eval/ablation.py scores a SEMANTICS-ONLY prompt
+(intent/action/scope/reasoning) against a keyword baseline that gets 0/14. It
+reached 14/14 on openai/gpt-oss-120b (2026-08-27); an earlier retired model got
+13/14. The score is model-dependent — quote it with the model id.
+
+The prompt in THIS file is not that prompt — it folds seven claim fields, six
+pressure fields and extraction rules into the same call. The ablation number is
+indicative of the approach, not a measurement of this prompt. Re-running the
+ablation against this prompt is open work.
+
+Output is NOT reproducible run to run despite temperature=0. hedged_fields in
+particular returns varying spellings for the same concept, which decision_engine
+check_gstin currently exact-matches against — see P0.4 in CLAUDE.md.
+
+Neither output is trusted as identity — with one live exception. The decision
+engine checks identity-bearing fields against the vendor master on every path
+EXCEPT decision_engine R2: when this layer reports intent=PAYMENT_FOLLOWUP, the
+engine returns ALLOW before any Tier 1 check runs. On that path this file's
+output decides alone. That is a known open flaw (P0.1), not the design intent.
 
 Guarantees to callers:
   - never raises; always returns an ExtractionResult
@@ -38,9 +54,14 @@ def sanitize(text: str) -> str:
     """
     Strip content that could carry hidden prompt-injection payloads.
 
-    Partial mitigation by design: identity fields are validated against
-    the vendor master regardless, so a successful injection here cannot
-    approve a payout. It could only suppress a contextual signal.
+    Partial mitigation by design. On the paths where Tier 1 runs, identity
+    fields are validated against the vendor master regardless, so an injection
+    that alters a claimed account or GSTIN cannot approve a payout.
+
+    It does NOT currently cover every path. An injection that pushes intent to
+    PAYMENT_FOLLOWUP reaches decision_engine R2, which returns ALLOW before any
+    Tier 1 check runs — so it can approve a payout. Closing that is P0.1; until
+    it is closed, do not describe this function as injection-proof.
     """
     text = INVISIBLE_CHARS.sub("", text)
     text = unicodedata.normalize("NFC", text)

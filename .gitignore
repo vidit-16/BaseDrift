@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+
+# Holdout split. Regenerable from the seeded generator in data/generate_data.py;
+# kept out of Git so the working tree never invites a casual look at it.
+# See README "Evaluation methodology" for what the protection actually is.
+data/cases_holdout.csv

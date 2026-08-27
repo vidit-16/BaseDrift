@@ -22,6 +22,7 @@ from dataclasses import asdict
 from typing import Optional, Dict, Any
 
 import extractor
+import llm_client
 from extractor import ExtractionResult
 from decision_engine import (
     decide, Decision, FAVResult, VendorRecord,
@@ -128,9 +129,21 @@ def run_case(email_text: str,
         "razorpay_actions": actions,
     }
 
+    # Scoring. An extraction failure routes to STEP_UP under R1, which is the
+    # correct POLICY — inconclusive is not clean. But it is NOT a detection.
+    # Grading it as one lets a dead API key, a rate limit, or a deprecated model
+    # id read as "fraud caught", inflating recall on any bulk eval run. Keep
+    # "we could not evaluate this" distinguishable from "we found something".
     if ground_truth:
-        caught = final_outcome in (BLOCK, STEP_UP)
-        audit["correct"] = caught if ground_truth == "fraud" else (not caught)
+        if not ext.ok:
+            audit["scored"] = False
+            audit["scoring_status"] = "inconclusive_extraction_failed"
+            audit["correct"] = None
+        else:
+            caught = final_outcome in (BLOCK, STEP_UP)
+            audit["scored"] = True
+            audit["scoring_status"] = "scored"
+            audit["correct"] = caught if ground_truth == "fraud" else (not caught)
 
     return audit
 
@@ -176,7 +189,10 @@ def summarize(audit: Dict[str, Any]) -> str:
             L.append(f"  api      : {a['effect']}")
 
     if audit.get("ground_truth"):
-        mark = "CORRECT" if audit.get("correct") else "INCORRECT"
+        if audit.get("correct") is None:
+            mark = "NOT SCORED — extraction never ran"
+        else:
+            mark = "CORRECT" if audit["correct"] else "INCORRECT"
         L.append(f"  truth    : {audit['ground_truth'].upper()} -> {mark}")
 
     return "\n".join(L)
@@ -206,6 +222,24 @@ Accounts, Balaji Logistics
 
 
 def demo():
+    # Refuse to run without a key. Without one, extraction fails, R1 holds the
+    # payout, and the hold superficially resembles a catch. Printing a verdict
+    # here would claim the semantic layer worked when it never ran at all.
+    if not llm_client.get_api_key():
+        print()
+        print("GROQ_API_KEY is not set — the semantic layer cannot run.")
+        print()
+        print("This demo deliberately refuses to print a verdict without it.")
+        print("A payout held because extraction failed is not a detection, and")
+        print("presenting it as one would misrepresent what PayeeProof does.")
+        print()
+        print('  PowerShell:  $env:GROQ_API_KEY="gsk_..."')
+        print("  cmd:         set GROQ_API_KEY=gsk_...")
+        print()
+        print("Free key, no credit card: console.groq.com")
+        print()
+        raise SystemExit(1)
+
     print()
     print("=" * 72)
     print("PayeeProof — hero case")

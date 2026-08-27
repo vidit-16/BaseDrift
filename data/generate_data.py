@@ -1,7 +1,7 @@
 """
 PayeeProof — synthetic data generator.
 
-Two outputs:
+Three outputs:
   vendor_master.csv   — the "trusted source" every request gets checked against
   cases_dev.csv        — 70% of cases, for tuning thresholds/rules
   cases_holdout.csv    — 30% of cases, touched exactly once at the end
@@ -14,6 +14,7 @@ truth. Each scenario_* function is a short story first, features second.
 """
 
 import csv
+import os
 import random
 
 random.seed(42)  # reproducible dataset
@@ -77,9 +78,22 @@ def _lookalike_domain(domain):
 
 
 def _slightly_altered_gstin(gstin):
-    pos = random.randint(2, 11)  # alter a digit in the PAN-like segment
+    """
+    Alter one character of the PAN-like segment, guaranteed to differ.
+
+    Positions 7-10 already hold digits, so a naive random.choice() can select
+    the character that is already there and return the GSTIN UNCHANGED. That
+    silently produced fraud_easy cases whose GSTIN matches the vendor master
+    (~4% of them), which would later surface as unexplained eval misses.
+    Resample until it actually differs.
+    """
+    pos = random.randint(2, 11)
     chars = list(gstin)
-    chars[pos] = random.choice("0123456789")
+    original = chars[pos]
+    replacement = original
+    while replacement == original:
+        replacement = random.choice("0123456789")
+    chars[pos] = replacement
     return "".join(chars)
 
 
@@ -251,20 +265,24 @@ def split_dev_holdout(cases, holdout_frac=0.30):
 def write_csv(path, rows):
     if not rows:
         return
-    with open(path, "w", newline="") as f:
+    with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
 
 
 def main():
+    # Write beside this file, not into the caller's cwd — pipeline.load_vendors()
+    # looks for repo_root/data/vendor_master.csv.
+    here = os.path.dirname(os.path.abspath(__file__))
+
     vendors = generate_vendor_master(n=120)
-    write_csv("./vendor_master.csv", vendors)
+    write_csv(os.path.join(here, "vendor_master.csv"), vendors)
 
     cases = generate_cases(vendors, n=800)
     dev, holdout = split_dev_holdout(cases, holdout_frac=0.30)
-    write_csv("./cases_dev.csv", dev)
-    write_csv("./cases_holdout.csv", holdout)
+    write_csv(os.path.join(here, "cases_dev.csv"), dev)
+    write_csv(os.path.join(here, "cases_holdout.csv"), holdout)
 
     def summarize(name, rows):
         fraud = sum(1 for r in rows if r["label"] == "fraud")

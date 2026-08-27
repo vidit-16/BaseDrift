@@ -61,7 +61,14 @@ Vendor master   FAV replay    Change lineage    Cross-contact
               Audit trail
 ```
 
-**The LLM never decides.** It converts unstructured communication into structured semantic evidence. A deterministic rule engine makes every money decision.
+**The LLM never decides** — that is the design intent, and it is how every path
+except one currently behaves. It converts unstructured communication into structured
+semantic evidence; a deterministic rule engine makes the money decision.
+
+One path does not yet honour it. When the semantic layer reports `PAYMENT_FOLLOWUP`,
+rule R2 returns ALLOW before any identity check runs, so a single model output can
+release a payout. That is a known open flaw, not a design choice — see
+[Known open flaws](#known-open-flaws).
 
 ---
 
@@ -74,8 +81,10 @@ The central claim is that the LLM does **semantic normalization**, not entity ex
 | Corpus | Keyword baseline | LLM semantic layer |
 |---|---|---|
 | v1 (vocabulary-cued) | 92.3% | — |
-| **v2 (inference-only, 14 cases)** | **0/14 — 0.0%** | **13/14 — 92.9%** |
+| **v2 (inference-only, 14 cases)** | **0/14 — 0.0%** | **14/14 — 100%** |
 | Control false positives | **4/4** legit follow-ups flagged as a change | **0/4** |
+
+Measured 2026-08-27 on `openai/gpt-oss-120b`.
 
 Corpus v1's 92.3% was **our own methodology error**, kept in the repo as a record: the paraphrases were written first and the keyword trigger lists written afterwards to match them — the same evaluation-leakage failure the dataset methodology was designed to avoid, reappearing one layer up.
 
@@ -87,9 +96,30 @@ Corpus v2 removes trigger vocabulary entirely. No case states "replace", "add", 
 
 The baseline code is byte-identical across both runs. It was not weakened for v2.
 
-**Stated honestly:** 14 hand-authored cases, not a large sample. The single miss (B3) was a case where our own ground truth was ambiguous and the model's stated reasoning was defensible.
+**Stated honestly, and the 100% is the part to be careful about.** 14 hand-authored
+cases is not a large sample, and a perfect score on it is weaker evidence than it
+looks — it means the corpus has stopped discriminating between capable models, not
+that the layer is flawless. The measurement has no headroom left to detect a
+regression.
 
-Reproduce: `python eval/ablation.py`
+An earlier run of this same corpus scored 13/14, missing B3 — a case where our own
+ground truth was arguably ambiguous and the model's stated reasoning was defensible.
+That run used a different model, since retired. B3 now passes. **The score moved
+because the model changed, not because anything in the corpus or the baseline
+changed**, which is the honest reading: this number is model-dependent and should be
+re-reported with the model id whenever it is quoted.
+
+What the corpus still supports is the *contrast* — 0/14 against 14/14 on identical
+inputs and identical ground truth — not the absolute figure.
+
+**Which prompt this measures.** The ablation scores a semantics-only prompt —
+`intent`, `action`, `scope`, `reasoning`. The production extractor folds those into a
+single call that also returns seven claim fields and six pressure fields, so it is a
+longer and harder prompt. The 14/14 belongs to the ablation's prompt and is indicative
+of the approach rather than a measurement of the shipped one. Re-running the ablation
+against the production prompt is open work.
+
+Reproduce: `python eval/ablation.py` (the baseline half needs no API key)
 
 ---
 
@@ -103,17 +133,27 @@ src/decision_engine.py  deterministic policy; full rule table in docstring
 src/verifier.py         callback to vendor-master contact; RazorpayX actions
 src/pipeline.py         run_case() end to end -> audit dict
 eval/ablation.py        semantic vs keyword ablation
-data/                   generator, vendor master, 800 labeled cases
+data/generate_data.py   seeded generator (seed 42)
+data/vendor_master.csv  120 vendors — the trusted record, committed
+data/cases_dev.csv      558 labeled cases, committed
+data/cases_holdout.csv  242 cases — gitignored, regenerate to reproduce
 ```
 
 Quick start:
 
 ```
 pip install -r requirements.txt
-$env:GROQ_API_KEY="gsk_..."
-python src/pipeline.py      # hero case
-python eval/ablation.py     # ablation
+python data/generate_data.py   # vendor master + dev/holdout splits
+python eval/ablation.py        # ablation; baseline half needs no API key
+
+$env:GROQ_API_KEY="gsk_..."    # PowerShell
+python src/pipeline.py         # hero case — refuses to run without the key
 ```
+
+`src/pipeline.py` exits non-zero rather than printing a verdict when
+`GROQ_API_KEY` is missing. Without a key, extraction fails, the payout is held,
+and the hold looks superficially like a catch — so the demo declines to show one
+rather than take credit for work the semantic layer never did.
 
 ---
 
@@ -121,13 +161,66 @@ python eval/ablation.py     # ablation
 
 Ground truth is assigned from independently authored scenario narratives, **not** derived from detector logic. Feature values are generated *from* each narrative afterwards, never the reverse.
 
-- 120 synthetic vendors, 800 cases, stratified 70/30 dev/holdout
+- 120 synthetic vendors, 800 cases, stratified 70/30 — 558 dev, 242 holdout
 - Four narratives: `fraud_easy`, `fraud_hard`, `legit_easy`, `legit_hard`
 - `fraud_hard` carries `name_match_score` 85–100 — it passes every bank-level check
 - `legit_hard` has a genuinely new account plus genuine urgency — the false-positive canary
-- The holdout is opened exactly once, at the end, and reported with its size
+
+**What holdout protection means here, precisely.** The generator is committed and
+seeded (`random.seed(42)`), so both splits are reproducible byte-for-byte by anyone
+who runs it. The holdout is therefore not secret and was never going to be — keeping
+the CSV out of Git buys tidiness, not secrecy. The protection is a *process*
+commitment: no rule or threshold is tuned against it, it is scored exactly once at
+the end, and that run is reported with its size whatever the result. `cases_dev.csv`
+and `vendor_master.csv` are committed; `cases_holdout.csv` is gitignored and
+regenerated on demand.
 
 **Known limitation, stated up front:** the narratives and the rules were authored by the same team, so they share one mental model of fraud. A blind spot would appear in both the exam and the student. The holdout measures generalization across cases, not across threat models.
+
+---
+
+## Known open flaws
+
+Found by audit, verified in the code, not yet fixed. Listed here because a control
+that overstates its own guarantees is the failure mode it exists to prevent.
+
+**The LLM can still produce an ALLOW.** `decision_engine.py` R2 returns ALLOW the
+moment the extractor reports `intent == PAYMENT_FOLLOWUP`, before the Tier 1 checks
+are constructed — no FAV, no GSTIN, no account continuity. A misclassification or a
+successful prompt injection that reaches that label releases a payout with zero
+identity validation.
+
+**FAV `account_status` is never read.** It is carried on `FAVResult`, logged in the
+audit record and printed in the summary, but no signal consumes it and the rule table
+does not mention it. An `inactive` account with a name match of 99 passes. `unknown`
+— meaning FAV was inconclusive — also passes, contradicting this project's own rule
+that inconclusive must never resolve to ALLOW.
+
+**The account checked is claimed, not actual.** Continuity is tested against the
+account number the LLM read out of the email, while the payout's real destination is
+never passed into the decision at all. At the `payout.pending` webhook the
+authoritative destination is the payout's own fund account; wiring that in is a
+prerequisite for the webhook handler, not a follow-up to it.
+
+**Extraction is not reproducible run to run.** The semantic layer is called at
+`temperature=0.0`, but repeated calls on the identical hero email return different
+`hedged_fields` values — `['gstin']`, `['proposed_gstin']`, and
+`['proposed_account_number', ...]` were all observed across six runs. The final
+decision was stable at `R4_bec_pattern` in all six, so the demo does not wobble, but
+the underlying signals do. This matters most for the forthcoming scorer: a 558-case
+dev run is not reproducible, and a threshold tuned on one run may not hold on the
+next. Any reported eval figure will need a stated run count, not a single number.
+
+**Hedge detection is coupled to free-text model output.** `check_gstin` decides
+PASS-versus-WARN by testing `hedged_fields` against the exact tuple
+`("gstin", "proposed_gstin")`. The model emits at least three different spellings for
+the same concept, so the hedge is silently missed whenever it picks one not in that
+tuple — observed once on the hero case, which reported `gstin PASS` on wording
+("should be the same as before") that is plainly hedged. The check needs to stop
+string-matching against an open vocabulary.
+
+**No test suite.** An earlier revision of the project notes claimed 38 unit tests.
+None exist. The claim has been removed rather than quietly left in place.
 
 ---
 
