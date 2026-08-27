@@ -134,7 +134,12 @@ src/extractor.py        the only LLM step; semantic layer + claims
 src/decision_engine.py  deterministic policy; full rule table in docstring
 src/verifier.py         callback to vendor-master contact; RazorpayX actions
 src/pipeline.py         run_case() end to end -> audit dict
-tests/                  decision_engine regression tests, no API key needed
+src/webhook.py          payout.pending handler; signature verification,
+                        destination resolution, document correlation
+src/webhook_app.py      ASGI entry point for uvicorn
+src/webhook_demo.py     drives the real endpoint over real signed HTTP
+tests/                  100 tests across 4 suites, none needing an API key
+                        run them all: python tests/run_all.py
 eval/rules_eval.py      decision-engine scoring vs baselines, no API key needed
 eval/ablation.py        semantic vs keyword ablation
 data/generate_data.py   seeded generator (seed 42)
@@ -148,8 +153,9 @@ Quick start:
 ```
 pip install -r requirements.txt
 python data/generate_data.py   # vendor master + dev/holdout splits
-python tests/test_decision_engine.py   # 22 tests, no API key needed
+python tests/run_all.py                # 100 tests, no API key needed
 python eval/rules_eval.py             # rule scoring vs baselines, no API key
+python src/webhook_demo.py            # signed webhook end to end
 python eval/ablation.py        # ablation; baseline half needs no API key
 
 $env:GROQ_API_KEY="gsk_..."    # PowerShell
@@ -160,6 +166,62 @@ python src/pipeline.py         # hero case — refuses to run without the key
 `GROQ_API_KEY` is missing. Without a key, extraction fails, the payout is held,
 and the hold looks superficially like a catch — so the demo declines to show one
 rather than take credit for work the semantic layer never did.
+
+---
+
+## The webhook, and the problem it has to solve
+
+RazorpayX fires `payout.pending` while the payout is frozen. That event says
+money is about to move — it does **not** say what document requested the
+destination, and authorization provenance is the entire question here. Two
+inputs are needed and only one arrives on the webhook.
+
+The merchant's AP system supplies the other via `POST /documents`. Correlation
+prefers an explicit `notes.payeeproof_document_id` on the payout, falls back to
+the most recent document for that vendor inside a 30-day window, and otherwise
+finds nothing.
+
+**Finding nothing is not an error.** It is a true statement — nobody asked for
+the destination to change — so it is expressed as `intent=PAYMENT_FOLLOWUP`,
+tagged `evidence_source="no_document_supplied"` so no audit reader can mistake
+it for something a model read, and handed to the same decision engine as
+everything else. Rule R2 already encodes the right policy:
+
+| destination | outcome | why |
+|---|---|---|
+| a known account for this vendor | ALLOW | nothing changed; nothing to authorize |
+| an account never seen before | HELD | money moving somewhere new with nothing authorizing it |
+| an account on file for another vendor | BLOCK | cross-contact reuse |
+
+The handler decides nothing itself. It gathers evidence and calls `decide()`.
+
+**The destination comes from the payout's own fund account**, resolved through
+RazorpayX, never from an account number quoted in the request. A message naming
+the vendor's genuine account while the payout points elsewhere is caught here,
+at the integration boundary.
+
+### Fail-safe by construction
+
+The safe state is inaction. A pending payout stays pending until something
+explicitly approves it, so every failure — bad signature, unknown fund account,
+unknown vendor, unreadable document, a crashed process, PayeeProof being down
+entirely — leaves the money where it is. There is no code path that releases a
+payout on error, which is why a 500 is an acceptable response: Razorpay retries,
+and nothing has moved in the meantime.
+
+### Signature verification
+
+HMAC-SHA256 over the raw body, per Razorpay's spec, with three details that are
+each a real vulnerability if got wrong: the signature covers the bytes **as
+received** rather than re-serialized JSON, the comparison is constant-time
+(`hmac.compare_digest`), and malformed input returns False rather than falling
+through. Events outside a 15-minute window are refused even with a valid
+signature, and repeated event ids are not reprocessed.
+
+A missing or zero `created_at` is refused rather than waved through. An earlier
+version guarded that check with a truthiness test, which is falsy at zero and so
+skipped freshness validation on exactly the events whose age could not be
+established — caught by the test asserting that no input path releases a payout.
 
 ---
 
@@ -279,6 +341,29 @@ The alternative was tested rather than assumed: treating any domain that embeds
 the vendor's name as deception recovers recall to 97.9% but returns false blocks
 to 15.8%, because a rebrand embeds the vendor's name too. That ambiguity is real
 rather than a detector gap — see the limit stated below.
+
+**The injection filter missed the two best hiding places.** `sanitize()`
+enumerated eight characters — zero-widths, soft hyphen, the LTR/RTL *marks*,
+BOM — and its docstring called them "the characters used to hide instructions
+inside documents". Two classes survived it:
+
+- **U+202A–202E and U+2066–2069**, the bidirectional embeddings, overrides and
+  isolates. An RLO makes text render in an order entirely different from how it
+  reads.
+- **U+E0000–E007F**, the Unicode Tag block. Wholly invisible, and the basis of
+  ASCII smuggling — arbitrary instructions riding inside innocuous text.
+
+Enumerating characters means the list is only ever as good as the last threat
+someone remembered, so filtering is now by Unicode **category** (`Cf` and `Cc`,
+plus the tag block explicitly), which closes the class rather than patching it.
+Newline and tab are preserved because they carry document structure.
+
+The count of what was removed is now reported rather than discarded: a
+legitimate invoice email contains none of these, so their presence is evidence
+about the document. Oversized documents are flagged too — padding the front
+pushes the real request past the size cap, and a model that read only part of a
+document is inconclusive, not clean. Neither feeds a rule yet; the generator
+emits no such cases, and rules do not change without dataset coverage.
 
 **Missing data was counted as evidence of fraud.** `Signal` had three states,
 and `WARN` was carrying two incompatible meanings: "I checked this and it looks

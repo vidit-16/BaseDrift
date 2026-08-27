@@ -1,0 +1,345 @@
+"""
+PayeeProof — webhook handler tests.
+
+Two halves:
+
+  SECURITY   — a webhook that can be forged is worse than no webhook, because
+               it hands an attacker the approve endpoint. These tests assert
+               the negatives: forged, tampered, replayed and unsigned events
+               must all be refused.
+
+  FAIL-SAFE  — every failure path must leave the payout PENDING. There must be
+               no input, malformed or otherwise, that causes a release.
+
+No API key and no network needed: the store is in-memory and the only case that
+would call the model uses a document short enough to be exercised separately.
+"""
+
+import hashlib
+import hmac
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+
+import webhook  # noqa: E402
+from decision_engine import ALLOW, BLOCK, STEP_UP, VendorRecord  # noqa: E402
+from webhook import (  # noqa: E402
+    FundAccount, Store, handle_payout_pending, no_document_evidence,
+    parse_payout_pending, verify_signature,
+)
+
+SECRET = "whsec_test_do_not_use_in_production"
+KNOWN_ACCT = "434392416664"
+NEW_ACCT = "351349409853"
+OTHER_ACCT = "999988887777"
+
+VENDOR = VendorRecord(
+    vendor_id="VEND0069", legal_name="Balaji Logistics",
+    gstin="07JQQPG8009O1Z2", known_domain="balajilogistic.com",
+    known_phone="9088190947", known_account_number=KNOWN_ACCT,
+    known_ifsc="KKBK0403467", avg_payout_amount=28000.0,
+)
+OTHER_VENDOR = VendorRecord(
+    vendor_id="VEND0123", legal_name="Nova Packaging",
+    gstin="27AAAAA0000A1Z5", known_domain="novapackaging.com",
+    known_phone="9000000000", known_account_number=OTHER_ACCT,
+    known_ifsc="HDFC0001234", avg_payout_amount=45000.0,
+)
+
+
+def make_store(dest_account=KNOWN_ACCT):
+    s = Store()
+    s.vendors = {VENDOR.vendor_id: VENDOR, OTHER_VENDOR.vendor_id: OTHER_VENDOR}
+    s.fund_accounts["fa_TEST"] = FundAccount(
+        "fa_TEST", dest_account, "KKBK0403467", "cont_1", VENDOR.vendor_id)
+    return s
+
+
+def event_body(payout_id="pout_TEST", fund_account_id="fa_TEST",
+               amount=2800000, notes=None, created_at=None, event="payout.pending"):
+    return {
+        "id": f"evt_{payout_id}",
+        "entity": "event",
+        "event": event,
+        "contains": ["payout"],
+        "created_at": int(created_at if created_at is not None else time.time()),
+        "payload": {"payout": {"entity": {
+            "id": payout_id, "entity": "payout",
+            "fund_account_id": fund_account_id,
+            "amount": amount, "currency": "INR", "status": "pending",
+            "notes": notes or {},
+        }}},
+    }
+
+
+def sign(raw: bytes, secret=SECRET):
+    return hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+
+
+def post(store, body=None, secret=SECRET, signature=None, raw=None):
+    if raw is None:
+        raw = json.dumps(body if body is not None else event_body()).encode()
+    sig = sign(raw) if signature is None else signature
+    return handle_payout_pending(raw, sig, store, secret=secret)
+
+
+# ══ SECURITY ══════════════════════════════════════════════════════════
+
+def test_valid_signature_is_accepted():
+    r = post(make_store())
+    assert r.status == 200
+
+
+def test_forged_signature_is_rejected():
+    r = post(make_store(), signature="0" * 64)
+    assert r.status == 400
+    assert r.outcome == webhook.HOLD
+
+
+def test_missing_signature_is_rejected():
+    r = post(make_store(), signature="")
+    assert r.status == 400
+
+
+def test_signature_from_the_wrong_secret_is_rejected():
+    raw = json.dumps(event_body()).encode()
+    r = handle_payout_pending(raw, sign(raw, "attacker_secret"), make_store(),
+                              secret=SECRET)
+    assert r.status == 400
+
+
+def test_tampered_body_is_rejected():
+    """Sign a legitimate body, then redirect the payout to another account."""
+    original = json.dumps(event_body()).encode()
+    good_sig = sign(original)
+    tampered = json.loads(original)
+    tampered["payload"]["payout"]["entity"]["fund_account_id"] = "fa_ATTACKER"
+    r = handle_payout_pending(json.dumps(tampered).encode(), good_sig,
+                              make_store(), secret=SECRET)
+    assert r.status == 400
+
+
+def test_signature_covers_raw_bytes_not_reserialised_json():
+    """
+    The classic bug. Re-serialising the parsed body changes key order and
+    whitespace, so a handler that signs THAT would reject a legitimate event
+    whose bytes differ only cosmetically. This asserts we verify the bytes as
+    received: the same object with different spacing has a different signature
+    and each must validate against its own.
+    """
+    body = event_body()
+    compact = json.dumps(body, separators=(",", ":")).encode()
+    spaced = json.dumps(body, indent=2).encode()
+    assert compact != spaced
+    assert verify_signature(compact, sign(compact), SECRET)
+    assert verify_signature(spaced, sign(spaced), SECRET)
+    # And crucially, a signature over one must NOT validate the other.
+    assert not verify_signature(spaced, sign(compact), SECRET)
+
+
+def test_verify_signature_never_falls_through_to_true():
+    for raw, sig, sec in [
+        (b"{}", "", SECRET), (b"{}", "abc", ""), (b"{}", None, SECRET),
+        (None, "abc", SECRET), (b"{}", "abc", None),
+    ]:
+        assert verify_signature(raw, sig, sec) is False
+
+
+def test_unconfigured_secret_refuses_to_process():
+    """Never process unauthenticated events, even in a misconfigured deploy."""
+    r = post(make_store(), secret="")
+    assert r.status == 500
+    assert r.outcome == webhook.HOLD
+
+
+def test_replayed_old_event_is_rejected():
+    """A captured event with a valid signature stays valid forever otherwise."""
+    old = event_body(created_at=time.time() - webhook.MAX_EVENT_AGE_SECONDS - 60)
+    r = post(make_store(), old)
+    assert r.status == 400
+    assert "replay window" in r.detail
+
+
+def test_duplicate_event_is_not_reprocessed():
+    store = make_store()
+    raw = json.dumps(event_body()).encode()
+    first = handle_payout_pending(raw, sign(raw), store, secret=SECRET)
+    second = handle_payout_pending(raw, sign(raw), store, secret=SECRET)
+    assert first.outcome != "DUPLICATE"
+    assert second.outcome == "DUPLICATE"
+    assert second.actions == []
+
+
+# ══ FAIL-SAFE: nothing may release a payout by accident ═══════════════
+
+def test_unknown_fund_account_holds():
+    r = post(make_store(), event_body(fund_account_id="fa_UNKNOWN"))
+    assert r.outcome == webhook.HOLD
+    assert r.actions == []
+
+
+def test_fund_account_mapping_to_unknown_vendor_holds():
+    store = make_store()
+    store.fund_accounts["fa_ORPHAN"] = FundAccount(
+        "fa_ORPHAN", NEW_ACCT, "X", "cont_9", "VEND_DOES_NOT_EXIST")
+    r = post(store, event_body(fund_account_id="fa_ORPHAN"))
+    assert r.outcome == webhook.HOLD
+
+
+def test_malformed_body_holds():
+    for raw in [b"not json", b"{}", b'{"event":"payout.processed"}',
+                b'{"event":"payout.pending","payload":{}}']:
+        r = handle_payout_pending(raw, sign(raw), make_store(), secret=SECRET)
+        assert r.outcome == webhook.HOLD, raw
+        assert r.audit is None
+
+
+def test_no_path_releases_without_an_explicit_allow():
+    """Sweep the failure inputs; none may produce payout_allowed."""
+    cases = [
+        dict(signature="0" * 64),
+        dict(secret=""),
+        dict(body=event_body(fund_account_id="fa_UNKNOWN")),
+        dict(body=event_body(created_at=0)),
+    ]
+    for kw in cases:
+        r = post(make_store(), **kw)
+        assert not (r.audit or {}).get("payout_allowed"), kw
+
+
+# ══ THE CORRELATION POLICY ════════════════════════════════════════════
+
+def test_routine_payout_to_known_account_needs_no_document():
+    """
+    Most payouts have no change request, and holding all of them would make the
+    control unusable. Nothing changed, so nothing needs authorising.
+    """
+    r = post(make_store(dest_account=KNOWN_ACCT))
+    assert r.outcome == ALLOW
+    assert r.audit["decision"]["rule_fired"] == "R2a_no_change_confirmed"
+    assert r.audit["document"]["correlation"] == "none_found"
+    assert r.audit["extraction"]["evidence_source"] == "no_document_supplied"
+
+
+def test_new_destination_with_no_document_is_held():
+    """
+    The case this handler exists for: money is moving somewhere new and there
+    is no authorisation for it anywhere.
+    """
+    r = post(make_store(dest_account=NEW_ACCT))
+    assert r.outcome == STEP_UP
+    assert r.audit["payout_allowed"] is False
+    assert r.audit["decision"]["rule_fired"] == "R2b_followup_unverified_destination"
+
+
+def test_destination_on_another_vendor_is_blocked():
+    r = post(make_store(dest_account=OTHER_ACCT))
+    assert r.outcome == BLOCK
+    assert r.audit["decision"]["rule_fired"] == "R2c_followup_destination_conflict"
+
+
+def test_destination_comes_from_the_payout_not_the_document():
+    """
+    P0.3, enforced at the integration boundary. The document names the vendor's
+    genuine account while the payout points elsewhere; the payout wins.
+    """
+    store = make_store(dest_account=NEW_ACCT)
+    store.put_document("doc_1", VENDOR.vendor_id,
+                       f"Please pay to our usual account {KNOWN_ACCT}.")
+    r = post(store, event_body(notes={"payeeproof_document_id": "doc_1"}))
+    assert r.audit["destination"]["account_number"] == NEW_ACCT
+    assert r.audit["destination"]["source"] == "razorpay_fund_account"
+    assert r.audit["payout_allowed"] is False
+
+
+def test_explicit_note_correlates_the_document():
+    store = make_store(dest_account=KNOWN_ACCT)
+    store.put_document("doc_9", VENDOR.vendor_id, "Chasing INV-4471, no changes.")
+    r = post(store, event_body(notes={"payeeproof_document_id": "doc_9"}))
+    assert r.audit["document"]["document_id"] == "doc_9"
+    assert r.audit["document"]["correlation"] == "explicit_note"
+
+
+def test_document_belonging_to_another_vendor_is_not_used():
+    """
+    A mis-pointed reference must not silently fall back to a different
+    document — guessing is worse than holding.
+    """
+    store = make_store(dest_account=KNOWN_ACCT)
+    store.put_document("doc_x", OTHER_VENDOR.vendor_id, "unrelated")
+    r = post(store, event_body(notes={"payeeproof_document_id": "doc_x"}))
+    assert r.audit["document"]["document_id"] is None
+    assert r.audit["document"]["correlation"] == "none_found"
+
+
+def test_stale_document_outside_the_window_is_ignored():
+    store = make_store(dest_account=KNOWN_ACCT)
+    store.put_document("doc_old", VENDOR.vendor_id, "ancient",
+                       received_at=time.time() - (webhook.CORRELATION_WINDOW_DAYS + 5) * 86400)
+    assert store.find_document(VENDOR.vendor_id) is None
+
+
+def test_most_recent_document_wins():
+    store = make_store()
+    store.put_document("older", VENDOR.vendor_id, "a", received_at=time.time() - 5000)
+    store.put_document("newer", VENDOR.vendor_id, "b", received_at=time.time() - 10)
+    assert store.find_document(VENDOR.vendor_id)["document_id"] == "newer"
+
+
+# ══ Details that are quietly load-bearing ═════════════════════════════
+
+def test_amount_is_converted_from_paise():
+    """Razorpay sends paise. Rupees would be compared 100x too high."""
+    evt = parse_payout_pending(event_body(amount=2800000))
+    assert evt.amount_rupees == 28000.0
+
+
+def test_no_document_evidence_is_marked_as_synthetic():
+    ext = no_document_evidence()
+    assert ext.ok is True
+    assert ext.evidence_source == "no_document_supplied"
+    assert ext.raw_llm_output is None
+
+
+def test_allow_emits_approve_and_block_emits_reject_plus_deactivate():
+    allow = post(make_store(dest_account=KNOWN_ACCT))
+    assert [a["method"] for a in allow.actions] == ["POST"]
+    assert "approve" in allow.actions[0]["endpoint"]
+
+    block = post(make_store(dest_account=OTHER_ACCT))
+    assert [a["method"] for a in block.actions] == ["POST", "PATCH"]
+    assert "reject" in block.actions[0]["endpoint"]
+    assert block.actions[1]["body"] == {"active": False}
+
+
+def test_held_payout_emits_no_api_call():
+    r = post(make_store(dest_account=NEW_ACCT))
+    assert all(a["method"] is None for a in r.actions)
+
+
+# ══ Runner ════════════════════════════════════════════════════════════
+
+def main():
+    tests = [(n, f) for n, f in sorted(globals().items())
+             if n.startswith("test_") and callable(f)]
+    failed = []
+    for name, fn in tests:
+        try:
+            fn()
+            print(f"  PASS  {name}")
+        except AssertionError as e:
+            failed.append(name)
+            print(f"  FAIL  {name}\n        {e or 'assertion failed'}")
+        except Exception as e:  # noqa: BLE001
+            failed.append(name)
+            print(f"  ERROR {name}\n        {type(e).__name__}: {e}")
+    print()
+    print(f"  {len(tests) - len(failed)}/{len(tests)} passed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

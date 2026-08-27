@@ -43,30 +43,82 @@ import llm_client
 
 
 # ── Injection mitigation ──────────────────────────────────────────────
-# Zero-width space/joiner, word joiner, soft hyphen, LTR/RTL marks, BOM.
-# These are the characters used to hide instructions inside documents.
-INVISIBLE_CHARS = re.compile(r"[\u200b\u200c\u200d\u2060\u00ad\u200e\u200f\ufeff]")
+# An earlier version enumerated eight characters: zero-width space/joiner, word
+# joiner, soft hyphen, the LTR/RTL *marks*, and BOM. That list missed the two
+# most effective vectors, both of which survived it:
+#
+#   U+202A-202E, U+2066-2069   bidirectional embeddings, overrides and isolates.
+#                              RLO in particular makes text render in an order
+#                              completely different from how it reads.
+#   U+E0000-E007F              the Unicode Tag block — wholly invisible, and the
+#                              basis of "ASCII smuggling", where arbitrary
+#                              instructions ride along inside innocuous text.
+#
+# Enumerating characters means the list is only ever as good as the last threat
+# someone remembered. Filtering by Unicode CATEGORY closes the class instead:
+# Cf covers every format character (bidi controls, zero-widths, BOM, tags) and
+# Cc covers the C0/C1 control range. Newline and tab are kept because they carry
+# real document structure.
+#
+# Note the deliberate cost: ZWNJ and ZWJ (U+200C/200D) are meaningful in Indic
+# scripts and emoji sequences, and this removes them. That is acceptable here —
+# the text is read for semantic intent, never rendered, and every
+# identity-bearing field is validated against the vendor master regardless.
+
+TAG_BLOCK_START, TAG_BLOCK_END = 0xE0000, 0xE007F
+_KEEP_CONTROLS = ("\n", "\t")
+
+
+def _is_hidden(ch: str) -> bool:
+    if ch in _KEEP_CONTROLS:
+        return False
+    if TAG_BLOCK_START <= ord(ch) <= TAG_BLOCK_END:
+        return True
+    return unicodedata.category(ch) in ("Cf", "Cc")
+
 
 MAX_DOCUMENT_CHARS = 6000
 
 
-def sanitize(text: str) -> str:
+@dataclass
+class Sanitized:
+    """
+    What sanitising a document produced, and what it had to remove to get there.
+
+    `hidden_chars_removed` is deliberately surfaced rather than discarded. A
+    legitimate invoice email does not contain bidi overrides or tag characters;
+    their presence is itself evidence about the document, and silently
+    scrubbing it away destroys that evidence. Nothing in the rule table consumes
+    this yet — adding a signal for it needs dataset coverage first, and the
+    generator emits no such cases.
+
+    `truncated` matters for the same reason: an oversized document means the
+    model saw only part of the request, which is inconclusive, not clean.
+    """
+    text: str
+    truncated: bool = False
+    hidden_chars_removed: int = 0
+
+
+def sanitize(text: str) -> Sanitized:
     """
     Strip content that could carry hidden prompt-injection payloads.
 
-    Partial mitigation by design. On the paths where Tier 1 runs, identity
-    fields are validated against the vendor master regardless, so an injection
-    that alters a claimed account or GSTIN cannot approve a payout.
-
-    It does NOT currently cover every path. An injection that pushes intent to
-    PAYMENT_FOLLOWUP reaches decision_engine R2, which returns ALLOW before any
-    Tier 1 check runs — so it can approve a payout. Closing that is P0.1; until
-    it is closed, do not describe this function as injection-proof.
+    Partial mitigation, and the boundary is worth stating precisely. Identity
+    fields are validated against the vendor master on every path, and an ALLOW
+    always requires the payout's real destination to match it, so an injection
+    here cannot release a payout. What it can still do is suppress a contextual
+    signal — talk the semantic layer out of reporting urgency, say — which
+    downgrades a BLOCK to a hold. It cannot upgrade anything to a release.
     """
-    text = INVISIBLE_CHARS.sub("", text)
     text = unicodedata.normalize("NFC", text)
-    text = re.sub(r"[^\S\n]+", " ", text)
-    return text[:MAX_DOCUMENT_CHARS].strip()
+    kept = [ch for ch in text if not _is_hidden(ch)]
+    removed = len(text) - len(kept)
+    text = re.sub(r"[^\S\n]+", " ", "".join(kept))
+    truncated = len(text) > MAX_DOCUMENT_CHARS
+    return Sanitized(text=text[:MAX_DOCUMENT_CHARS].strip(),
+                     truncated=truncated,
+                     hidden_chars_removed=removed)
 
 
 # ── Enums (as plain constants — no external deps) ─────────────────────
@@ -174,10 +226,25 @@ class ExtractionResult:
 
     raw_llm_output: Optional[str] = None  # kept for audit
 
+    # Where this evidence came from. Almost always the model — but the webhook
+    # handler synthesises one of these to represent "no change-request document
+    # exists for this payout", which is a true and meaningful statement rather
+    # than a model reading. The audit trail must never confuse the two.
+    evidence_source: str = "llm_extraction"
+
+    # What sanitising the source document found. Surfaced into the audit record
+    # rather than discarded: hidden characters in an invoice email are evidence,
+    # and a truncated document means the model read only part of the request.
+    document_truncated:   bool = False
+    hidden_chars_removed: int  = 0
+
     def to_dict(self):
         return {
             "ok": self.ok,
             "failure_reason": self.failure_reason,
+            "evidence_source": self.evidence_source,
+            "document_truncated": self.document_truncated,
+            "hidden_chars_removed": self.hidden_chars_removed,
             "semantic": {
                 "intent": self.intent,
                 "action": self.action,
@@ -245,8 +312,21 @@ def validate(parsed: dict) -> Optional[str]:
         if not isinstance(parsed[lst], list):
             return f"{lst} must be a list"
 
-    if parsed["amount"] is not None and not isinstance(parsed["amount"], (int, float)):
-        return "amount must be a number or null"
+    amount = parsed["amount"]
+    if amount is not None:
+        if not isinstance(amount, (int, float)) or isinstance(amount, bool):
+            return "amount must be a number or null"
+        if amount < 0:
+            return f"amount must not be negative (got {amount})"
+
+    # Deliberately NOT rejected: action=ADD_FUND_ACCOUNT with
+    # scope=OUTSTANDING_AND_FUTURE. It reads as contradictory under the prompt's
+    # own definitions, but a vendor can legitimately say "this new account takes
+    # the October invoice and everything after for THIS division, while the old
+    # one keeps serving the other". Rejecting a defensible reading would fail
+    # extraction and hold a payout for a debatable semantic point, so the
+    # combination is passed through and left to the rule table, where ADD
+    # carries less weight than REPLACE anyway.
 
     return None
 
@@ -264,11 +344,12 @@ def extract(raw_document: str, model=None) -> ExtractionResult:
     Main entry point. Never raises.
     Caller MUST check .ok before using any field.
     """
-    clean = sanitize(raw_document)
-    if not clean:
-        return ExtractionResult(ok=False, failure_reason="document is empty after sanitization")
+    doc = sanitize(raw_document or "")
+    if not doc.text:
+        return ExtractionResult(ok=False,
+                                failure_reason="document is empty after sanitization")
 
-    parsed, err = llm_client.call_json(SYSTEM_PROMPT, clean, model=model)
+    parsed, err = llm_client.call_json(SYSTEM_PROMPT, doc.text, model=model)
     if err:
         return ExtractionResult(ok=False, failure_reason=err)
 
@@ -287,6 +368,8 @@ def extract(raw_document: str, model=None) -> ExtractionResult:
     return ExtractionResult(
         ok=True,
         raw_llm_output=json.dumps(parsed)[:1000],
+        document_truncated=doc.truncated,
+        hidden_chars_removed=doc.hidden_chars_removed,
 
         intent=parsed["intent"],
         action=parsed["action"],

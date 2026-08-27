@@ -19,11 +19,25 @@ Groq free tier. No credit card. console.groq.com
     src/llm_client.py       one place that talks to Groq; model auto-detect,
                             429 retry, reasoning-model handling
     src/extractor.py        THE ONLY LLM STEP. semantic layer + claims.
-                            never trusted as identity.
+                            never trusted as identity. sanitize() filters by
+                            Unicode CATEGORY (Cf/Cc + the tag block), not by an
+                            enumerated character list — enumeration missed bidi
+                            overrides and the tag block entirely. Reports
+                            hidden_chars_removed and document_truncated rather
+                            than discarding them.
     src/decision_engine.py  deterministic policy. full rule table in the
                             module docstring — code implements exactly that.
     src/verifier.py         callback to vendor_master phone only, never the
                             number in the request. emits RazorpayX API actions.
+    src/webhook.py          payout.pending handler. HMAC-SHA256 over the RAW
+                            body, constant-time compare, 15-min replay window,
+                            event-id dedupe. Resolves the destination from the
+                            payout's fund account (P0.3 at the boundary).
+                            Correlates the change-request document; "no document"
+                            is evidence, not an error — see R2.
+                            The handler NEVER decides; it calls decide().
+    src/webhook_app.py      ASGI entry.  uvicorn webhook_app:app --app-dir src
+    src/webhook_demo.py     five signed scenarios over real HTTP.
     src/pipeline.py         run_case() — end to end, returns audit dict.
                             `python src/pipeline.py` runs the hero demo.
                             Refuses to run without GROQ_API_KEY, by design.
@@ -56,6 +70,14 @@ Groq free tier. No credit card. console.groq.com
   a BLOCK. Never let missing data push a case toward rejection.
 - Never report accuracy on cases_*.csv without the null baseline beside it.
   A do-nothing pipeline scores 100%/100%; the real metric is step-up rate.
+- The webhook's safe state is INACTION. A pending payout stays pending unless
+  something explicitly approves it, so every error path must simply not
+  approve. Never add a "default to allow" branch, for any reason.
+- Signature verification uses the RAW request bytes and hmac.compare_digest.
+  Do not re-serialise the parsed body to verify it, and do not swap in ==.
+- sanitize() filters by Unicode category. Do NOT replace it with a character
+  list: the list it replaced missed U+202A-202E and the whole U+E0000 tag
+  block, which are the two most effective ways to hide text in a document.
 - "Couldn't evaluate" is not "caught". An R1 hold is correct policy but is
   never scored as a detection — run_case() sets correct=None, scored=False.
 - The holdout is scored once, at the end, and reported with its size.
@@ -129,9 +151,11 @@ Then:
    measures the rules. Keep them separate: rules tuning must stay instant and
    deterministic. Cache extractions to disk so re-scoring costs nothing, and
    remember extraction is non-deterministic — report a run count and spread.
-5. webhook handler for payout.pending
-6. unit tests for extractor / verifier / pipeline. decision_engine is done
-   (22 regression tests). Extractor tests must not depend on live output —
-   it is non-deterministic; stub llm_client and assert on parsing/validation.
+5. DONE — webhook handler for payout.pending. 26 tests, no API key.
+6. DONE — unit tests for extractor / verifier / pipeline. 100 tests total
+   across 4 suites (decision_engine 29, extractor 26, verifier+pipeline 19,
+   webhook 26). `python tests/run_all.py`. None need an API key: the extractor
+   suite stubs llm_client, since live output is non-deterministic and any test
+   asserting on it would be flaky by construction.
 7. dashboard
 8. holdout run (once) + pitch video
