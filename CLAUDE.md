@@ -36,9 +36,14 @@ Groq free tier. No credit card. console.groq.com
 
 ## Hard rules — do not break these
 - The LLM never decides. It produces evidence; decision_engine decides.
-  DESIGN INTENT, not yet true in code — see P0.1 below. Do not cite this as
-  a guarantee in the README, the pitch, or a docstring until R2 is fixed.
+  ENFORCED as of the P0 pass: an ALLOW requires the payout's real destination
+  to match the vendor master, on every rule including R2. The worst a hostile
+  extraction achieves is downgrading a BLOCK to a hold, never a release.
+  tests/test_decision_engine.py holds this property down — keep it that way.
 - Identity is never taken from the request. Always vendor master.
+- The account checked is the payout's real destination, never the number the
+  model read out of the message. The claim is a labelled fallback for offline
+  analysis and the audit record always says which was used.
 - Callback always goes to vendor.known_phone, never a number in the email.
   (This one IS enforced — verifier.py reads vendor.known_phone directly.)
 - Inconclusive -> STEP_UP, never ALLOW. "couldn't check" != "clean".
@@ -68,30 +73,23 @@ identical hero email returned three different hedged_fields spellings. The final
 decision held at R4_bec_pattern in all six, but signal-level output varies —
 budget for this when scorer.py reports numbers.
 
-## Next — P0 first, these are safety flaws not features
+## Done — P0 safety pass
 
-P0.1  decision_engine R2 short-circuits to ALLOW on the LLM's intent label
-      alone, before any Tier 1 check runs. One model output releases a payout
-      with zero identity validation. Fix: run Tier 1 against the payout's real
-      destination even when the semantic layer reports no change; treat "no
-      change requested, but destination is unknown" as STEP_UP, never ALLOW.
+P0.1  R2 no longer short-circuits. It verifies "nothing is changing" against the
+      resolved destination: known -> R2a ALLOW, unknown -> R2b STEP_UP, another
+      vendor's account -> R2c BLOCK. Old engine returned ALLOW on the label alone
+      even with FAV inactive, name score 3, attacker domain and urgency present.
+P0.2  check_account_status is a Tier 1 signal. active PASS / inactive FAIL /
+      unknown WARN. Old engine returned R7_all_clear on an inactive account.
+P0.3  decide() and run_case() take destination_account_number, resolved from the
+      payout's fund account. resolve_destination() prefers it over the model's
+      claim and records provenance in Decision.destination_source.
+P0.4  _hedged() matches the concept inside normalised field names. "gst_number"
+      and "gst" were both missed before and failed open.
 
-P0.2  FAVResult.account_status is never read by any signal. An inactive
-      account with name_match_score 99 returns PASS, and "unknown" — meaning
-      FAV was inconclusive — also passes, violating the inconclusive rule
-      above. Fix in check_name_match, and add the row to the rule table.
-
-P0.3  check_account_continuity tests ext.proposed_account_number — the LLM's
-      reading of the email — not the payout's actual destination, which
-      run_case() never receives. Settle before the webhook handler is built;
-      that handler is where the real fund account first becomes available.
-
-P0.4  check_gstin decides PASS-vs-WARN by testing hedged_fields against the exact
-      tuple ("gstin", "proposed_gstin"). The model emits at least three spellings
-      for the same concept, so a genuine hedge is silently missed when it picks
-      another — observed on the hero case, which reported gstin PASS on "should be
-      the same as before". Fails OPEN (fewer WARNs -> more ALLOWs), so it is a
-      safety bug, not cosmetic. Stop string-matching an open vocabulary.
+All four have regression tests in tests/test_decision_engine.py (17 tests, no API
+key). Verified they fail against the pre-P0 engine — do not assume a green run
+means anything until you have checked a test can fail.
 
 Then:
 1. case -> email renderer. BLOCKS eval/scorer.py: cases_*.csv hold feature
@@ -101,6 +99,8 @@ Then:
    Extraction is non-deterministic, so a single pass is one sample: report a run
    count and spread, not a bare number, and re-check any threshold across runs.
 3. webhook handler for payout.pending
-4. unit tests — decision_engine first, it is pure and needs no API key
+4. unit tests for extractor / verifier / pipeline. decision_engine is done
+   (17 regression tests). Extractor tests must not depend on live output —
+   it is non-deterministic; stub llm_client and assert on parsing/validation.
 5. dashboard
 6. holdout run (once) + pitch video

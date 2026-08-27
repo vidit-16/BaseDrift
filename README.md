@@ -61,14 +61,16 @@ Vendor master   FAV replay    Change lineage    Cross-contact
               Audit trail
 ```
 
-**The LLM never decides** — that is the design intent, and it is how every path
-except one currently behaves. It converts unstructured communication into structured
+**The LLM never decides.** It converts unstructured communication into structured
 semantic evidence; a deterministic rule engine makes the money decision.
 
-One path does not yet honour it. When the semantic layer reports `PAYMENT_FOLLOWUP`,
-rule R2 returns ALLOW before any identity check runs, so a single model output can
-release a payout. That is a known open flaw, not a design choice — see
-[Known open flaws](#known-open-flaws).
+Stated as the property that is actually enforced and tested: **an ALLOW always
+requires the payout's real destination account to match the vendor master.** No
+combination of model output can produce one on its own. The worst a hostile or
+mistaken extraction can achieve is downgrading a BLOCK to a hold — never a release.
+
+This was not true until recently. R2 used to return ALLOW on the intent label alone,
+before any identity check ran. See [What the audit found](#what-the-audit-found).
 
 ---
 
@@ -132,6 +134,7 @@ src/extractor.py        the only LLM step; semantic layer + claims
 src/decision_engine.py  deterministic policy; full rule table in docstring
 src/verifier.py         callback to vendor-master contact; RazorpayX actions
 src/pipeline.py         run_case() end to end -> audit dict
+tests/                  decision_engine regression tests, no API key needed
 eval/ablation.py        semantic vs keyword ablation
 data/generate_data.py   seeded generator (seed 42)
 data/vendor_master.csv  120 vendors — the trusted record, committed
@@ -144,6 +147,7 @@ Quick start:
 ```
 pip install -r requirements.txt
 python data/generate_data.py   # vendor master + dev/holdout splits
+python tests/test_decision_engine.py   # 17 tests, no API key needed
 python eval/ablation.py        # ablation; baseline half needs no API key
 
 $env:GROQ_API_KEY="gsk_..."    # PowerShell
@@ -179,28 +183,51 @@ regenerated on demand.
 
 ---
 
+## What the audit found
+
+A review of this repository found four ways the decision layer could release a payout
+it should not have. All four are fixed and carry regression tests that fail against
+the previous engine. They are documented rather than quietly patched, because a
+control that hides its own near-misses is the failure mode it exists to prevent.
+
+**The LLM could produce an ALLOW by itself.** R2 returned ALLOW the moment the
+extractor reported `intent == PAYMENT_FOLLOWUP`, before the Tier 1 checks were
+constructed — no FAV, no GSTIN, no continuity. Measured against the old engine: a
+request with an unseen destination account, FAV reporting the account *inactive*, a
+name match of 3/100, an attacker-controlled domain and urgency language returned
+`ALLOW` with `payout_allowed=True`. A prompt injection that reached that one label was
+a total bypass.
+
+R2 now verifies the claim instead of accepting it. "Nothing is changing" is checked
+against the real destination: known account → ALLOW, unknown → hold, another vendor's
+account → block. Demonstrated end to end — the identical follow-up email allows when
+the payout points at the vendor's known account and holds when it points anywhere
+else.
+
+**FAV `account_status` was never read.** It was carried on `FAVResult`, logged, and
+printed, but consumed by nothing. A change request against an account the bank
+reported **inactive**, with a name match of 99, returned `R7_all_clear` — "all
+identity checks passed". It is now a Tier 1 signal: active passes, inactive fails,
+unknown warns, because an inconclusive FAV is not a clean one.
+
+**The account checked was claimed, not actual.** Continuity tested the account number
+the LLM read out of the email; the payout's real destination was never passed into the
+decision at all — the old `decide()` had no parameter for it. A message naming the
+vendor's genuine account while the payout pointed elsewhere passed cleanly. The
+resolved destination now comes from the payout's fund account, the message's claim is
+a labelled fallback for offline analysis only, and every audit record states which of
+the two was validated.
+
+**Hedge detection failed open on spelling.** `check_gstin` decided PASS-versus-WARN by
+testing `hedged_fields` against the exact tuple `("gstin", "proposed_gstin")`. The
+model emits `gst_number` and `gst` for the same concept, and both were silently
+missed — and a missed hedge means one fewer WARN, biasing toward release. The hero
+case demonstrated it live, reporting `gstin PASS` on "should be the same as before".
+Matching is now on the concept, and that same case now correctly warns.
+
+---
+
 ## Known open flaws
-
-Found by audit, verified in the code, not yet fixed. Listed here because a control
-that overstates its own guarantees is the failure mode it exists to prevent.
-
-**The LLM can still produce an ALLOW.** `decision_engine.py` R2 returns ALLOW the
-moment the extractor reports `intent == PAYMENT_FOLLOWUP`, before the Tier 1 checks
-are constructed — no FAV, no GSTIN, no account continuity. A misclassification or a
-successful prompt injection that reaches that label releases a payout with zero
-identity validation.
-
-**FAV `account_status` is never read.** It is carried on `FAVResult`, logged in the
-audit record and printed in the summary, but no signal consumes it and the rule table
-does not mention it. An `inactive` account with a name match of 99 passes. `unknown`
-— meaning FAV was inconclusive — also passes, contradicting this project's own rule
-that inconclusive must never resolve to ALLOW.
-
-**The account checked is claimed, not actual.** Continuity is tested against the
-account number the LLM read out of the email, while the payout's real destination is
-never passed into the decision at all. At the `payout.pending` webhook the
-authoritative destination is the payout's own fund account; wiring that in is a
-prerequisite for the webhook handler, not a follow-up to it.
 
 **Extraction is not reproducible run to run.** The semantic layer is called at
 `temperature=0.0`, but repeated calls on the identical hero email return different
@@ -219,8 +246,10 @@ tuple — observed once on the hero case, which reported `gstin PASS` on wording
 ("should be the same as before") that is plainly hedged. The check needs to stop
 string-matching against an open vocabulary.
 
-**No test suite.** An earlier revision of the project notes claimed 38 unit tests.
-None exist. The claim has been removed rather than quietly left in place.
+**Test coverage is partial.** `decision_engine` has 17 regression tests, each of
+which fails against the pre-audit engine. `extractor`, `verifier` and `pipeline` have
+none. An earlier revision of the project notes claimed 38 unit tests across all four
+when zero existed; that claim was removed rather than quietly left in place.
 
 ---
 

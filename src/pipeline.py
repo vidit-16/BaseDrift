@@ -78,10 +78,18 @@ def run_case(email_text: str,
              case_id: str = "CASE",
              payout_id: str = "pout_TEST",
              fund_account_id: str = "fa_TEST",
+             destination_account_number: Optional[str] = None,
              ground_truth: Optional[str] = None) -> Dict[str, Any]:
     """
     Full pipeline for one case. Never raises.
     Returns a dict that IS the audit record.
+
+    destination_account_number is the account the payout will actually credit.
+    In production it is resolved from the payout's fund_account_id at the
+    payout.pending webhook, before any money moves. It is the authoritative
+    input: without it the engine can only inspect the account number the
+    message claimed, which is a self-reported value. Leave it None only for
+    offline analysis of raw messages, where the audit record will say so.
     """
 
     # 1. Semantic extraction — the only LLM step
@@ -91,7 +99,8 @@ def run_case(email_text: str,
     dec = decide(ext, fav, vendor,
                  other_vendor_accounts=account_index,
                  near_duplicate=near_duplicate,
-                 split_below=split_below)
+                 split_below=split_below,
+                 destination_account_number=destination_account_number)
 
     # 3. Verification, only if the decision asked for it
     ver = verifier.verify(dec, vendor, callback_reaches_known_contact, case_id)
@@ -111,6 +120,13 @@ def run_case(email_text: str,
         "case_id": case_id,
         "vendor_id": vendor.vendor_id,
         "ground_truth": ground_truth,
+
+        "payout": {
+            "payout_id": payout_id,
+            "fund_account_id": fund_account_id,
+            "destination_account_number": destination_account_number,
+            "destination_known": destination_account_number is not None,
+        },
 
         "extraction": ext.to_dict(),
 
@@ -167,6 +183,11 @@ def summarize(audit: Dict[str, Any]) -> str:
              f"name={fav['registered_name']} score={fav['name_match_score']}")
 
     d = audit["decision"]
+    if d.get("checked_destination"):
+        src = d.get("destination_source")
+        note = ("payout fund account" if src == "razorpay_payout"
+                else "UNVERIFIED — self-reported in the request")
+        L.append(f"  dest     : {d['checked_destination']}  ({note})")
     for s in d.get("tier1", []):
         L.append(f"  T1 {s['result']:4s} {s['name']:20s} {s['detail']}")
     for s in d.get("tier2", []):
@@ -270,6 +291,11 @@ def demo():
         HERO_EMAIL, vendor, fav,
         callback_reaches_known_contact=False,   # attacker has no access to it
         case_id="HERO",
+        # A fund account was created from the spoofed email and a payout is
+        # pending to it. In production this is read back from the payout's
+        # fund_account_id at payout.pending — it is the account the money
+        # would actually credit, not the number the email happened to state.
+        destination_account_number="351349409853",
         ground_truth="fraud",
     )
 
