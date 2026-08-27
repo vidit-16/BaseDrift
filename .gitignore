@@ -8,3 +8,7 @@ venv/
 # kept out of Git so the working tree never invites a casual look at it.
 # See README "Evaluation methodology" for what the protection actually is.
 data/cases_holdout.csv
+
+# Derived extraction results. Keyed by email hash + model + prompt hash,
+# so a stale entry could outlive the prompt that produced it.
+eval/.extraction_cache/

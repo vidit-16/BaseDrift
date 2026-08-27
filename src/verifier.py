@@ -115,6 +115,10 @@ def razorpay_actions(outcome: str,
     The real RazorpayX calls a decision maps to. Returned as data so the
     pipeline can log them; execution is a separate, explicit step.
 
+    NOTHING IN THIS REPOSITORY CALLS RAZORPAY. These are action plans. Any
+    action carrying requires_human_confirmation must not be executed
+    automatically by whatever eventually does run them.
+
     Endpoints:
       POST  /v1/payouts/{id}/approve
       POST  /v1/payouts/{id}/reject
@@ -143,6 +147,12 @@ def razorpay_actions(outcome: str,
                 "endpoint": f"/v1/fund_accounts/{fund_account_id}",
                 "body": {"active": False},
                 "effect": "fund account deactivated so it cannot be reused",
+                # Rejecting one payout is recoverable; deactivating the fund
+                # account affects every future payout to it and cannot be undone
+                # from here. At the measured false-block rate that is roughly one
+                # legitimate vendor in 170 losing a destination on a decision no
+                # human reviewed. The reject stands alone; this waits for review.
+                "requires_human_confirmation": True,
             },
         ]
 

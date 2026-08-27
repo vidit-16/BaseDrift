@@ -2,7 +2,9 @@
 
 **A verified bank account and a verified account holder are not proof that a beneficiary change was authorized.**
 
-PayeeProof is a pre-authorization decision layer for RazorpayX payouts. It intercepts at the `payout.pending` webhook — while the payout is frozen and no money has moved — verifies the *authorization provenance* of the proposed destination against the merchant's own vendor master, and calls Razorpay's native approve/reject endpoints.
+PayeeProof is a pre-authorization decision layer for RazorpayX payouts. It intercepts at the `payout.pending` webhook — while the payout is frozen and no money has moved — verifies the *authorization provenance* of the proposed destination against the merchant's own vendor master, and resolves to Razorpay's native approve/reject endpoints.
+
+**Precisely:** the decision layer, the webhook handler and the evaluation are real and run. The RazorpayX side is not connected — the engine emits the approve/reject/deactivate calls as action plans, and nothing in this repository executes them. See [What is real and what is simulated](#what-is-real-and-what-is-simulated).
 
 Razorpay AI Buildathon — Track 2 (AI Risk Manager).
 
@@ -138,9 +140,11 @@ src/webhook.py          payout.pending handler; signature verification,
                         destination resolution, document correlation
 src/webhook_app.py      ASGI entry point for uvicorn
 src/webhook_demo.py     drives the real endpoint over real signed HTTP
-tests/                  100 tests across 4 suites, none needing an API key
+tests/                  128 tests across 5 suites, none needing an API key
                         run them all: python tests/run_all.py
 eval/rules_eval.py      decision-engine scoring vs baselines, no API key needed
+data/render.py          case -> email renderer; leakage guard is a hard failure
+eval/extraction_eval.py what the extractor actually recovers, with caching
 eval/ablation.py        semantic vs keyword ablation
 data/generate_data.py   seeded generator (seed 42)
 data/vendor_master.csv  120 vendors — the trusted record, committed
@@ -153,7 +157,7 @@ Quick start:
 ```
 pip install -r requirements.txt
 python data/generate_data.py   # vendor master + dev/holdout splits
-python tests/run_all.py                # 100 tests, no API key needed
+python tests/run_all.py                # 128 tests, no API key needed
 python eval/rules_eval.py             # rule scoring vs baselines, no API key
 python src/webhook_demo.py            # signed webhook end to end
 python eval/ablation.py        # ablation; baseline half needs no API key
@@ -230,7 +234,9 @@ established — caught by the test asserting that no input path releases a payou
 Ground truth is assigned from independently authored scenario narratives, **not** derived from detector logic. Feature values are generated *from* each narrative afterwards, never the reverse.
 
 - 120 synthetic vendors, 800 cases, stratified 70/30 — 558 dev, 242 holdout
-- Four narratives: `fraud_easy`, `fraud_hard`, `legit_easy`, `legit_hard`
+- Ten narratives: `fraud_easy`, `fraud_hard`, `fraud_compromised`,
+  `fraud_mule`, `fraud_sim_swap`, `legit_easy`, `legit_hard`,
+  `legit_rebrand`, `legit_add_account`, `legit_unreachable`
 - `fraud_hard` carries `name_match_score` 85–100 — it passes every bank-level check
 - `legit_hard` has a genuinely new account plus genuine urgency — the false-positive canary
 
@@ -418,10 +424,122 @@ tuple — observed once on the hero case, which reported `gstin PASS` on wording
 ("should be the same as before") that is plainly hedged. The check needs to stop
 string-matching against an open vocabulary.
 
-**Test coverage is partial.** `decision_engine` has 17 regression tests, each of
-which fails against the pre-audit engine. `extractor`, `verifier` and `pipeline` have
-none. An earlier revision of the project notes claimed 38 unit tests across all four
-when zero existed; that claim was removed rather than quietly left in place.
+**Not yet connected to Razorpay.** Covered in full below — the decision layer
+is real, the integration is not.
+
+---
+
+## What the extractor actually costs
+
+`eval/rules_eval.py` assumes perfect extraction. This measures the gap.
+`data/render.py` turns each case row into the message a finance team would have
+received; `eval/extraction_eval.py` runs the real model over them and compares
+the result against the rules-only upper bound.
+
+**The leakage guard comes first, because the README already records this project
+making that exact mistake once.** Ablation corpus v1 scored the keyword baseline
+at 92.3% because the paraphrases were written first and the trigger lists after.
+Rendering an eval corpus is the same trap one layer down. So `BANNED_VOCABULARY`
+is imported from the baseline's own trigger lists — retyping it would let the two
+drift — and a hit is a hard failure that stops rendering, not a warning. The
+baseline is then re-run over the finished corpus:
+
+```
+keyword baseline over the rendered corpus:  0 / 556 = 0.0%
+```
+
+Meaning has to be inferred from these messages, not pattern-matched. (Its
+intent-only figure of 79.5% is the baseline's degenerate rule showing through —
+it labels anything containing an account number as a change, so it gets all 442
+changes right and all 114 follow-ups wrong.)
+
+### Measured — 60 stratified cases, 1 run, `openai/gpt-oss-120b`
+
+| | |
+|---|---|
+| intent | 100% |
+| scope | 100% |
+| action | 96.6% |
+| account · IFSC · domain · amount | 98.3% · 98.3% · 100% · 100% |
+| urgency (precision / recall) | 94.4% / 100% |
+| channel manipulation | 100% / **70.6%** |
+| extraction failed | 1.7% |
+
+**End to end the extractor costs nothing on this sample:**
+
+| | recall | precision | false BLOCK | same rule as ideal |
+|---|---|---|---|---|
+| rules-only upper bound | 86.7% | 81.2% | 0.0% | — |
+| **with real extraction** | **86.7%** | **81.2%** | **0.0%** | **98.3%** |
+
+That is not luck, it is the architecture doing what it was built to do. Identity
+never comes from the extracted claims — the destination is read from the payout's
+own fund account — so a misread account number cannot move a decision. And the
+signals the model *does* miss are corroborating ones: channel manipulation at
+70.6% recall can downgrade a BLOCK to a hold, never a hold to a release.
+
+**Two findings from building it, both mine rather than the model's.** Scoring
+initially showed 90% on account numbers; every miss was a follow-up where the
+model correctly returned *nothing proposed*, because the field is
+`proposed_account_number` and a message restating where payment has always gone
+proposes nothing. The ground truth was wrong. Separately, the model returns the
+full `accounts@vendor.com` roughly 8% of the time where a domain was asked for —
+which `check_domain` would read as a mismatch for a domain that matches, and
+which would defeat lookalike detection entirely, since the edit distance is
+computed on registrable labels. Normalising that took domain recovery from 91.7%
+to 100%.
+
+Caveats that travel with these numbers: 60 of 556 cases, one run, one model. The
+extractor is not reproducible run to run, so a single pass is one sample —
+`--runs N` reports the spread.
+
+---
+
+## What is real and what is simulated
+
+Stating this plainly because the difference is easy to blur, and a fraud control
+that overstates its own deployment status is exactly the failure mode it exists
+to prevent.
+
+**Real, and runs:** the decision engine and its rule table; the semantic layer
+against a live model; the webhook handler including HMAC verification, replay
+and idempotency handling; document correlation; the rules evaluation and the
+ablation; 111 tests.
+
+**Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
+vendor lookups that would be API reads. FAV results are replayed
+schema-faithfully — it is unavailable in test mode and is RazorpayX Lite only.
+The callback outcome comes from scenario ground truth. `razorpay_actions()`
+returns action *plans*; **nothing here calls Razorpay.**
+
+### What production would additionally require
+
+Not blockers for the evaluation work, but blockers for any claim of live
+operation:
+
+- **The handler must become asynchronous.** It currently calls the model inline,
+  and `llm_client` permits a 45-second request plus retries. Razorpay expects a
+  2xx well inside a few seconds. The shape it needs: verify HMAC → durably claim
+  the event → return 2xx → a worker resolves the fund account, document and FAV,
+  decides, writes the audit, and an idempotent executor performs the actions.
+- **Durable idempotency.** Dedupe is an in-memory dict today, so a restart
+  forgets it and a redelivery would be decided twice. This needs a uniqueness
+  constraint in real storage, and the claim must not be marked complete until
+  the work finishes — otherwise a crash mid-decision leaves an event
+  permanently "processed" and its payout permanently pending.
+- **`POST /documents` needs authentication.** It currently accepts a document
+  for any vendor from anyone who can reach it. That cannot release a payout —
+  the destination check still governs — but it is a denial-of-service on the
+  payout queue, and the endpoint needs merchant authentication, vendor
+  authorization, size limits and immutable server-side storage.
+- **Deactivation must stay behind human review.** BLOCK emits the fund-account
+  deactivation flagged `requires_human_confirmation`. Rejecting one payout is
+  recoverable; deactivating the destination is not, and at the measured
+  false-block rate that would be roughly one legitimate vendor in 170 losing a
+  destination on a decision nobody reviewed.
+- **The Payout Approval API is not enabled by default** — it requires Technology
+  Partner/OAuth access, which is a commercial prerequisite rather than a code
+  one.
 
 ---
 

@@ -94,16 +94,29 @@ def signed_post(client, fund_account_id, notes=None, secret=SECRET, label=""):
     }
     raw = json.dumps(body).encode()
     sig = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
-    return client.post("/webhooks/razorpay", content=raw, headers={
-        "X-Razorpay-Signature": sig, "Content-Type": "application/json"})
+    resp = client.post("/webhooks/razorpay", content=raw, headers={
+        "X-Razorpay-Signature": sig, "Content-Type": "application/json",
+        "x-razorpay-event-id": body["id"]})
+    # The HTTP response deliberately carries no audit record — it holds vendor
+    # identity and account numbers, which belong in server-side storage. The
+    # demo re-runs the handler directly purely to display what was recorded.
+    audit = None
+    if resp.status_code == 200:
+        from webhook import handle_payout_pending
+        replay = handle_payout_pending(
+            raw, sig, client.app.state.store, secret=secret,
+            event_id_header=body["id"] + "_demo_display")
+        audit = replay.audit
+    return resp, audit
 
 
-def show(label, expectation, resp):
+def show(label, expectation, sent):
+    resp, audit = sent
     j = resp.json()
     print(f"  {label}")
     print(f"    expected : {expectation}")
     print(f"    HTTP {resp.status_code}   outcome: {j['outcome']}")
-    a = j.get("audit")
+    a = audit
     if not a:
         print(f"    detail   : {j['detail']}")
         print()

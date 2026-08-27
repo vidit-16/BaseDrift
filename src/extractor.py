@@ -21,11 +21,14 @@ Output is NOT reproducible run to run despite temperature=0. hedged_fields in
 particular returns varying spellings for the same concept, which decision_engine
 check_gstin currently exact-matches against — see P0.4 in NOTES.md.
 
-Neither output is trusted as identity — with one live exception. The decision
-engine checks identity-bearing fields against the vendor master on every path
-EXCEPT decision_engine R2: when this layer reports intent=PAYMENT_FOLLOWUP, the
-engine returns ALLOW before any Tier 1 check runs. On that path this file's
-output decides alone. That is a known open flaw (P0.1), not the design intent.
+Neither output is trusted as identity. The decision engine validates
+identity-bearing fields against the vendor master on every path, and an ALLOW
+always requires the payout's real destination to match it — including on R2,
+where reporting PAYMENT_FOLLOWUP no longer releases anything by itself.
+
+The worst a hostile or mistaken reading achieves is suppressing a contextual
+signal, which downgrades a BLOCK to a hold. It cannot upgrade anything to a
+release.
 
 Guarantees to callers:
   - never raises; always returns an ExtractionResult
@@ -281,8 +284,18 @@ REQUIRED_KEYS = {
 }
 
 
-def validate(parsed: dict) -> Optional[str]:
-    """Returns an error string, or None if the payload is usable."""
+def validate(parsed) -> Optional[str]:
+    """
+    Returns an error string, or None if the payload is usable.
+
+    The top-level type is checked FIRST. A model that returns a JSON array
+    rather than an object used to reach `parsed.keys()` and raise
+    AttributeError straight through extract(), whose docstring promises it
+    never raises. Provider output is untrusted input like any other.
+    """
+    if not isinstance(parsed, dict):
+        return f"expected a JSON object, got {type(parsed).__name__}"
+
     missing = REQUIRED_KEYS - set(parsed.keys())
     if missing:
         return f"missing fields: {sorted(missing)}"
@@ -311,6 +324,19 @@ def validate(parsed: dict) -> Optional[str]:
                 "channel_manipulation_phrases"):
         if not isinstance(parsed[lst], list):
             return f"{lst} must be a list"
+        # Element types matter, not just the container. decision_engine joins
+        # these into signal detail strings; a non-string element raised
+        # TypeError there, one layer removed from the actual cause.
+        for i, item in enumerate(parsed[lst]):
+            if not isinstance(item, str):
+                return (f"{lst}[{i}] must be a string, got "
+                        f"{type(item).__name__}")
+
+    for f in ("proposed_account_number", "proposed_ifsc", "proposed_gstin",
+              "sender_domain", "sender_phone", "vendor_name_claimed",
+              "reasoning"):
+        if f in parsed and parsed[f] is not None and not isinstance(parsed[f], (str, int)):
+            return f"{f} must be a string or null, got {type(parsed[f]).__name__}"
 
     amount = parsed["amount"]
     if amount is not None:
@@ -329,6 +355,27 @@ def validate(parsed: dict) -> Optional[str]:
     # carries less weight than REPLACE anyway.
 
     return None
+
+
+def _domain(v: Optional[str]) -> Optional[str]:
+    """
+    Reduce a sender to its domain.
+
+    The model is asked for the domain but returns the whole address perhaps 8%
+    of the time ("accounts@omdistributors.com"). That is not cosmetic:
+    check_domain compares this against vendor.known_domain, so an address form
+    reads as a MISMATCH for a domain that actually matches — and
+    is_lookalike_domain compares registrable labels, so "accounts@ba1aji..."
+    versus "balaji..." falls outside the edit-distance bound and the deception
+    signal is missed entirely. Normalise here rather than hoping the prompt
+    holds.
+    """
+    if v is None:
+        return None
+    d = str(v).strip().lower()
+    if "@" in d:
+        d = d.rsplit("@", 1)[-1]
+    return d.strip("<>()[] 	").strip() or None
 
 
 def _s(v):
@@ -353,17 +400,40 @@ def extract(raw_document: str, model=None) -> ExtractionResult:
     if err:
         return ExtractionResult(ok=False, failure_reason=err)
 
-    schema_err = validate(parsed)
-    if schema_err:
+    # Everything from here to the return is wrapped. The caller's only
+    # guarantee is that it gets an ExtractionResult back, and that guarantee
+    # has to hold for provider output nobody anticipated — not just for the
+    # malformations currently enumerated in validate().
+    try:
+        schema_err = validate(parsed)
+        if schema_err:
+            return ExtractionResult(
+                ok=False,
+                failure_reason=f"schema validation failed: {schema_err}",
+                raw_llm_output=_safe_dump(parsed),
+            )
+        return _build_result(parsed, doc)
+    except Exception as e:  # noqa: BLE001
         return ExtractionResult(
             ok=False,
-            failure_reason=f"schema validation failed: {schema_err}",
-            raw_llm_output=json.dumps(parsed)[:500],
+            failure_reason=f"malformed provider output ({type(e).__name__}: {e})",
+            raw_llm_output=_safe_dump(parsed),
         )
+
+
+def _safe_dump(parsed) -> str:
+    try:
+        return json.dumps(parsed, default=str)[:500]
+    except Exception:  # noqa: BLE001
+        return repr(parsed)[:500]
+
+
+def _build_result(parsed: dict, doc) -> ExtractionResult:
 
     gstin = _s(parsed["proposed_gstin"])
     domain = _s(parsed["sender_domain"])
     phone = _s(parsed["sender_phone"])
+
 
     return ExtractionResult(
         ok=True,
@@ -379,7 +449,7 @@ def extract(raw_document: str, model=None) -> ExtractionResult:
         proposed_account_number=_s(parsed["proposed_account_number"]),
         proposed_ifsc=(_s(parsed["proposed_ifsc"]) or "").upper() or None,
         proposed_gstin=gstin.upper() if gstin else None,
-        sender_domain=domain.lower() if domain else None,
+        sender_domain=_domain(domain),
         sender_phone=re.sub(r"\D", "", phone)[-10:] if phone else None,
         vendor_name_claimed=_s(parsed["vendor_name_claimed"]),
         amount=float(parsed["amount"]) if parsed["amount"] is not None else None,

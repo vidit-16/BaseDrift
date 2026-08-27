@@ -282,6 +282,46 @@ def test_evidence_source_defaults_to_the_model():
         assert E.extract("doc").evidence_source == "llm_extraction"
 
 
+# ── Provider output is untrusted input ───────────────────────────────
+# extract() promises it never raises. It did: a model returning a JSON array
+# reached parsed.keys() in validate() and raised AttributeError straight out.
+
+def test_non_object_json_is_rejected_not_raised():
+    for payload in ([1, 2, 3], "a string", 42, None, [{"intent": "x"}]):
+        with stub_llm(payload):
+            r = E.extract("doc")
+        assert r.ok is False, payload
+        assert r.failure_reason
+
+
+def test_phrase_list_elements_must_be_strings():
+    """
+    decision_engine joins these into detail strings. A non-string element
+    raised TypeError there — one layer removed from the actual cause.
+    """
+    for bad in ([123], [{"a": 1}], [None], ["ok", 7]):
+        assert E.validate(valid_payload(urgency_phrases=bad)), bad
+    assert E.validate(valid_payload(urgency_phrases=["fine", "also fine"])) is None
+
+
+def test_scalar_claim_fields_must_be_stringlike():
+    for bad in ({"a": 1}, [1, 2], object()):
+        assert E.validate(valid_payload(proposed_account_number=bad)), bad
+
+
+def test_extract_survives_an_exception_anywhere_in_conversion():
+    """The wrap is belt and braces: even a validator bug must not raise."""
+    real = E.validate
+    E.validate = lambda p: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        with stub_llm(valid_payload()):
+            r = E.extract("doc")
+        assert r.ok is False
+        assert "malformed provider output" in r.failure_reason
+    finally:
+        E.validate = real
+
+
 # ── Runner ───────────────────────────────────────────────────────────
 
 def main():

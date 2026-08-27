@@ -173,6 +173,69 @@ def test_duplicate_event_is_not_reprocessed():
     assert second.actions == []
 
 
+def test_event_id_header_is_used_for_dedupe():
+    """
+    Razorpay's x-razorpay-event-id is what stays stable across retries of one
+    delivery. The body id is only a fallback.
+    """
+    store = make_store()
+    raw = json.dumps(event_body()).encode()
+    a = handle_payout_pending(raw, sign(raw), store, secret=SECRET,
+                              event_id_header="evt_from_header")
+    b = handle_payout_pending(raw, sign(raw), store, secret=SECRET,
+                              event_id_header="evt_from_header")
+    assert a.outcome != "DUPLICATE"
+    assert b.outcome == "DUPLICATE"
+
+
+def test_retry_of_a_failed_delivery_is_still_processed():
+    """
+    Razorpay retries for up to 24 hours. A freshness window shorter than that
+    turns one transient failure into a payout that is never decided at all —
+    and a stuck payout is invisible, which is worse than the replay it guarded.
+    """
+    twelve_hours = time.time() - 12 * 3600
+    r = post(make_store(), event_body(created_at=twelve_hours))
+    assert r.status == 200
+    assert r.outcome != webhook.HOLD or "replay" not in r.detail
+
+
+def test_window_still_refuses_something_far_outside_any_retry():
+    ancient = time.time() - webhook.MAX_EVENT_AGE_SECONDS - 3600
+    r = post(make_store(), event_body(created_at=ancient))
+    assert r.status == 400
+    assert "replay window" in r.detail
+
+
+def test_http_response_does_not_leak_the_audit_record():
+    """
+    The audit holds vendor identity, account numbers and the document reading.
+    It belongs in server-side storage, not a response body.
+    """
+    from fastapi.testclient import TestClient
+    os.environ["RAZORPAY_WEBHOOK_SECRET"] = SECRET
+    client = TestClient(webhook.create_app(make_store()))
+    raw = json.dumps(event_body()).encode()
+    resp = client.post("/webhooks/razorpay", content=raw,
+                       headers={"X-Razorpay-Signature": sign(raw)})
+    body = resp.json()
+    assert "audit" not in body
+    # Not just the audit key: `detail` used to carry the rule's reason string,
+    # which embeds the destination account number and the vendor's known
+    # accounts. Assert on the whole serialised response, not one field.
+    dump = json.dumps(body)
+    assert KNOWN_ACCT not in dump
+    assert VENDOR.legal_name not in dump
+    assert VENDOR.known_phone not in dump
+
+    # Rejection paths carry no audit, so a static non-identifying detail is
+    # still returned and is useful for debugging a delivery.
+    bad = client.post("/webhooks/razorpay", content=raw,
+                      headers={"X-Razorpay-Signature": "0" * 64})
+    assert bad.status_code == 400
+    assert "signature" in bad.json()["detail"]
+
+
 # ══ FAIL-SAFE: nothing may release a payout by accident ═══════════════
 
 def test_unknown_fund_account_holds():

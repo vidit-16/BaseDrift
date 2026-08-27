@@ -268,8 +268,16 @@ def resolve_destination(ext: ExtractionResult,
     emails still works. The source string travels into the audit record so a
     reader can always tell which of the two was validated.
     """
-    if destination_account_number:
-        return str(destination_account_number).strip(), "razorpay_payout"
+    if destination_account_number is not None:
+        dest = str(destination_account_number).strip()
+        if dest:
+            return dest, "razorpay_payout"
+        # Supplied, but blank or whitespace. Do NOT fall back to the request's
+        # own claim. The caller passing this parameter asserted it had
+        # authoritative data; substituting a self-reported account number when
+        # that data turns out to be missing is precisely the swap this control
+        # exists to prevent, and it previously produced an outright ALLOW.
+        return None, "authoritative_destination_malformed"
     if ext.proposed_account_number:
         return ext.proposed_account_number, "email_claim_only"
     return None, "unresolved"
@@ -317,6 +325,18 @@ def is_lookalike_domain(sender: str, known: str) -> bool:
     if abs(len(sa) - len(sb)) > LOOKALIKE_MAX_EDITS:
         return False
     return _edit_distance(sa, sb) <= LOOKALIKE_MAX_EDITS
+
+
+def _phrases(items, limit: int = 2) -> str:
+    """
+    Join model-supplied phrases for a signal detail string.
+
+    Coerces each element rather than assuming it is a string. validate() now
+    rejects non-string elements upstream, but the engine is also fed directly by
+    the evaluators and tests, and a rule engine that can be crashed by its own
+    input is a denial-of-service on the payout queue.
+    """
+    return "; ".join(str(x) for x in (items or [])[:limit])
 
 
 def _hedged(hedged_fields: List[str], *concepts: str) -> bool:
@@ -411,6 +431,12 @@ def check_account_continuity(ext: ExtractionResult, v: VendorRecord,
     dest, src = resolve_destination(ext, destination_account_number)
 
     if dest is None:
+        if src == "authoritative_destination_malformed":
+            return Signal("account_continuity", 1, INCONCLUSIVE,
+                          "the payout's destination was supplied but is blank or "
+                          "malformed; refusing to substitute the account number "
+                          "claimed in the request",
+                          src)
         return Signal("account_continuity", 1, INCONCLUSIVE,
                       "no destination could be resolved — neither the payout's "
                       "fund account nor an account number in the request",
@@ -464,7 +490,7 @@ def check_domain(ext: ExtractionResult, v: VendorRecord) -> Signal:
 def check_urgency(ext: ExtractionResult) -> Signal:
     if not ext.urgency_detected:
         return Signal("urgency", 2, PASS, "no urgency language", "semantic_layer")
-    phrases = "; ".join(ext.urgency_phrases[:2]) or "detected"
+    phrases = _phrases(ext.urgency_phrases) or "detected"
     return Signal("urgency", 2, WARN, f"urgency: {phrases}", "semantic_layer")
 
 
@@ -472,7 +498,7 @@ def check_channel_manipulation(ext: ExtractionResult) -> Signal:
     if not ext.channel_manipulation_detected:
         return Signal("channel_manipulation", 2, PASS,
                       "no channel redirection", "semantic_layer")
-    phrases = "; ".join(ext.channel_manipulation_phrases[:2]) or "detected"
+    phrases = _phrases(ext.channel_manipulation_phrases) or "detected"
     return Signal("channel_manipulation", 2, WARN,
                   f"redirecting communication: {phrases}", "semantic_layer")
 

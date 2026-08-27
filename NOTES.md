@@ -70,6 +70,9 @@ Groq free tier. No credit card. console.groq.com
   a BLOCK. Never let missing data push a case toward rejection.
 - Never report accuracy on cases_*.csv without the null baseline beside it.
   A do-nothing pipeline scores 100%/100%; the real metric is step-up rate.
+- NOTHING here calls Razorpay. razorpay_actions() emits action PLANS. Do not
+  describe the system as calling approve/reject, and do not auto-execute any
+  action carrying requires_human_confirmation.
 - The webhook's safe state is INACTION. A pending payout stays pending unless
   something explicitly approves it, so every error path must simply not
   approve. Never add a "default to allow" branch, for any reason.
@@ -86,9 +89,12 @@ Groq free tier. No credit card. console.groq.com
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
 data generator + generated dev/holdout splits.
 
-No test suite exists. An earlier version of this file claimed 38 unit tests
-(11 extractor, 15 decision, 12 verifier/pipeline). That was never true — there
-are no test files in the repo or in git history. Writing them is item 4 below.
+128 tests across 5 suites, none needing an API key: `python tests/run_all.py`
+(decision_engine 32, extractor 32, render 17, verifier+pipeline 19, webhook 30).
+
+An early version of this file claimed 38 unit tests when zero existed. The
+claim was removed at the time rather than quietly left in place; the suites
+that exist now were written afterwards.
 
 Verified by running (2026-08-27, model openai/gpt-oss-120b):
   - keyword baseline 0/14, 4/4 control false positives
@@ -117,6 +123,25 @@ P0.3  decide() and run_case() take destination_account_number, resolved from the
       claim and records provenance in Decision.destination_source.
 P0.4  _hedged() matches the concept inside normalised field names. "gst_number"
       and "gst" were both missed before and failed open.
+P0.7  Post-audit fixes (external review, 2026-08-27). All confirmed by
+      reproduction before being fixed:
+      - extract() raised AttributeError on a JSON array, contradicting its own
+        "never raises" guarantee. Top-level type is checked first, every list
+        element is type-checked, and conversion is wrapped.
+      - decision_engine crashed joining non-string phrase elements. A rule
+        engine crashable by its own input is a DoS on the payout queue.
+      - resolve_destination() treated a BLANK destination_account_number as
+        "not supplied" and fell back to the account the request itself named,
+        producing an outright ALLOW. Blank now holds; only None falls back,
+        and only for offline document analysis.
+      - the webhook's 15-minute freshness window was shorter than Razorpay's
+        24-hour retry period, so one transient failure meant the payout was
+        never decided. Idempotency is the real replay control; the window is
+        now a coarse backstop outside the retry period.
+      - the HTTP response returned the full audit record, and then still leaked
+        account numbers through the rule's reason string. Nothing identifying
+        goes back over HTTP now.
+      - x-razorpay-event-id is used for dedupe; the body id is a fallback.
 P0.6  R4 now requires evidence of deliberate impersonation, not just
       contextual risk. It fired on REPLACE + new account + any 2 Tier-2 warns;
       both are true of a legitimate bank change, and it rejected 15.8% of
@@ -143,18 +168,27 @@ Then:
    legitimate cases; varying FAV availability and account_status.
 2. second verification channel for the sim-swap gap (P0.6). The callback is a
    single point of failure and the rules provably cannot cover it.
-3. case -> email renderer. BLOCKS the extraction eval: cases_*.csv hold feature
+3. DONE — data/render.py. Deterministic per-case seeds, renderer version
+   + sha256 per message, and a leakage guard importing BANNED_VOCABULARY from
+   the baseline's own trigger lists. Baseline scores 0/556 on the output.
+   OLD NOTE — case -> email renderer. BLOCKED the extraction eval: cases_*.csv hold feature
    rows with no message text, and run_case() takes email_text. Must not leak
    the keyword baseline's trigger vocabulary — see the README's v1 note.
-4. extraction eval — email text through the real extractor, compared against
+4. DONE — eval/extraction_eval.py. 60-case stratified sample, 1 run,
+   gpt-oss-120b: intent 100%, scope 100%, action 96.6%, claims 94.9-100%,
+   channel-manipulation recall only 70.6%. End to end real == ideal, 98.3%
+   same rule. Disk cache keyed by email sha + model + prompt hash +
+   NORMALIZER_VERSION — bump the last one whenever claim normalisation
+   changes, or stale entries outlive the fix.
+   OLD NOTE — extraction eval — email text through the real extractor, compared against
    the generator's features. Measures the EXTRACTOR; eval/rules_eval.py already
    measures the rules. Keep them separate: rules tuning must stay instant and
    deterministic. Cache extractions to disk so re-scoring costs nothing, and
    remember extraction is non-deterministic — report a run count and spread.
 5. DONE — webhook handler for payout.pending. 26 tests, no API key.
-6. DONE — unit tests for extractor / verifier / pipeline. 100 tests total
-   across 4 suites (decision_engine 29, extractor 26, verifier+pipeline 19,
-   webhook 26). `python tests/run_all.py`. None need an API key: the extractor
+6. DONE — unit tests for extractor / verifier / pipeline. 111 tests total
+   across 5 suites (decision_engine 32, extractor 32, render 17,
+   verifier+pipeline 19, webhook 30). `python tests/run_all.py`. None need an API key: the extractor
    suite stubs llm_client, since live output is non-deterministic and any test
    asserting on it would be flaky by construction.
 7. dashboard

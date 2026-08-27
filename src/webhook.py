@@ -64,11 +64,20 @@ import verifier
 log = logging.getLogger("payeeproof.webhook")
 
 SIGNATURE_HEADER = "X-Razorpay-Signature"
+EVENT_ID_HEADER = "x-razorpay-event-id"
 
-# Razorpay signs the raw request body. An event older than this is refused even
-# with a valid signature — a captured-and-replayed event is otherwise valid
-# forever.
-MAX_EVENT_AGE_SECONDS = 15 * 60
+# Razorpay retries a failed delivery for up to 24 hours. A freshness window
+# SHORTER than the provider's retry period is a self-inflicted outage: a
+# transient failure at minute 0 means every retry arrives "too old" and the
+# payout is never decided at all — worse than the replay it was guarding
+# against, because a stuck payout is invisible.
+#
+# Idempotency, not freshness, is the real replay control: an event already
+# processed is refused however fresh it looks. The window is a coarse backstop
+# for events far outside any legitimate retry, so it sits beyond the retry
+# period rather than inside it.
+RAZORPAY_RETRY_WINDOW_SECONDS = 24 * 60 * 60
+MAX_EVENT_AGE_SECONDS = RAZORPAY_RETRY_WINDOW_SECONDS + 60 * 60
 
 # How far back to look for a change-request document for this vendor.
 CORRELATION_WINDOW_DAYS = 30
@@ -222,6 +231,14 @@ class Store:
 
     # -- replay / idempotency ------------------------------------------
     def seen_before(self, event_id: str) -> bool:
+        """
+        In-memory, and therefore NOT sufficient for production: a restart
+        forgets everything and a redelivery would be decided twice. Production
+        needs a uniqueness constraint in durable storage, and the claim should
+        not be marked complete until the work actually finishes — otherwise a
+        crash mid-decision leaves an event permanently "processed" and the
+        payout permanently pending.
+        """
         now = time.time()
         for k, ts in list(self._seen_events.items()):
             if now - ts > MAX_EVENT_AGE_SECONDS * 2:
@@ -271,7 +288,8 @@ def handle_payout_pending(raw_body: bytes,
                           signature: str,
                           store: Store,
                           secret: Optional[str] = None,
-                          fav_lookup=None) -> HandlerResult:
+                          fav_lookup=None,
+                          event_id_header: Optional[str] = None) -> HandlerResult:
     """
     Full path from raw request to decision. Never raises.
 
@@ -318,9 +336,13 @@ def handle_payout_pending(raw_body: bytes,
 
     # 3. Idempotency. Razorpay retries; re-deciding is wasteful and re-emitting
     #    approve/reject calls is worse.
-    if store.seen_before(evt.event_id):
+    # Razorpay's own x-razorpay-event-id header is authoritative for identity
+    # and is what stays stable across retries of the same delivery. The body id
+    # is a fallback for callers that do not send it.
+    dedupe_key = (event_id_header or "").strip() or evt.event_id
+    if store.seen_before(dedupe_key):
         return HandlerResult(200, "DUPLICATE",
-                             f"event {evt.event_id} already processed")
+                             f"event {dedupe_key} already processed")
 
     # 4. The authoritative destination — from the payout, never from a document.
     fa = store.resolve_fund_account(evt.fund_account_id)
@@ -409,15 +431,26 @@ def create_app(store: Optional[Store] = None, fav_lookup=None):
         # the classic way to break this.
         raw = await request.body()
         sig = request.headers.get(SIGNATURE_HEADER, "")
-        result = handle_payout_pending(raw, sig, app.state.store,
-                                       fav_lookup=fav_lookup)
+        result = handle_payout_pending(
+            raw, sig, app.state.store, fav_lookup=fav_lookup,
+            event_id_header=request.headers.get(EVENT_ID_HEADER))
         if result.audit:
             log.info("payout %s -> %s", result.audit["payout_id"], result.outcome)
-        return JSONResponse(
-            status_code=result.status,
-            content={"outcome": result.outcome, "detail": result.detail,
-                     "audit": result.audit},
-        )
+        # Nothing identifying goes back over HTTP. The audit record obviously
+        # cannot, but neither can `detail` once a decision was reached: it is
+        # the rule's reason string, and those embed the destination account
+        # number and the vendor's known accounts. Razorpay needs to know the
+        # event was accepted; everything else belongs in server-side storage.
+        #
+        # Rejection paths have no audit and carry only static, non-identifying
+        # messages ("signature verification failed"), which are safe to return
+        # and genuinely useful when debugging a delivery.
+        payload = {"outcome": result.outcome}
+        if result.audit:
+            payload["payout_id"] = result.audit["payout_id"]
+        else:
+            payload["detail"] = result.detail
+        return JSONResponse(status_code=result.status, content=payload)
 
     @app.post("/documents")
     async def ingest_document(request: Request):

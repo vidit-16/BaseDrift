@@ -353,6 +353,39 @@ def test_compromised_mailbox_falls_through_to_callback():
     assert d.needs_callback is True
 
 
+# ── A blank authoritative destination must never fall back ───────────
+
+def test_blank_destination_does_not_fall_back_to_the_claim():
+    """
+    resolve_destination() treated "" as "not supplied" and fell back to the
+    account number the request itself named — producing an outright ALLOW.
+    A caller passing this parameter asserted it had authoritative data.
+    """
+    for blank in ("", "   ", "	"):
+        d = run(ext(intent=INTENT_FOLLOWUP, account=KNOWN_ACCT), dest=blank)
+        assert d.outcome != ALLOW, f"released on dest={blank!r}"
+        assert d.payout_allowed is False
+        assert d.destination_source == "authoritative_destination_malformed"
+
+
+def test_absent_destination_still_uses_the_claim_for_offline_analysis():
+    """The None case is different: nothing was asserted, so the documented
+    offline fallback applies and is labelled as unverified."""
+    d = run(ext(intent=INTENT_FOLLOWUP, account=KNOWN_ACCT), dest=None)
+    assert d.destination_source == "email_claim_only"
+
+
+def test_engine_does_not_crash_on_non_string_phrases():
+    """A rule engine crashable by its own input is a DoS on the payout queue."""
+    e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+            account=NEW_ACCT, urgency=True)
+    e.urgency_phrases = [123, {"a": 1}, None]
+    e.channel_manipulation_detected = True
+    e.channel_manipulation_phrases = [object()]
+    d = run(e, dest=NEW_ACCT)
+    assert d.outcome in (ALLOW, STEP_UP, BLOCK)
+
+
 # ── Guards on behaviour that must NOT have changed ───────────────────
 
 def test_extraction_failure_still_steps_up():
