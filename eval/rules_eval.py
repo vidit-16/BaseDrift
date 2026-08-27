@@ -52,12 +52,16 @@ from decision_engine import (  # noqa: E402
 from extractor import (  # noqa: E402
     ExtractionResult,
     INTENT_CHANGE, INTENT_FOLLOWUP,
-    ACTION_REPLACE, ACTION_NONE,
-    SCOPE_BOTH, SCOPE_NONE,
+    ACTION_REPLACE, ACTION_ADD, ACTION_NONE,
+    SCOPE_BOTH, SCOPE_FUTURE, SCOPE_NONE,
 )
 
 DATA = os.path.join(HERE, "..", "data")
-SCENARIOS = ("fraud_easy", "fraud_hard", "legit_easy", "legit_hard")
+SCENARIOS = (
+    "fraud_easy", "fraud_hard", "fraud_compromised", "fraud_mule", "fraud_sim_swap",
+    "legit_easy", "legit_hard", "legit_rebrand", "legit_add_account",
+    "legit_unreachable",
+)
 
 
 # ── Loading ───────────────────────────────────────────────────────────
@@ -103,13 +107,18 @@ def features_to_extraction(row, vendor):
     hedging, channel manipulation — are left at their clean defaults rather than
     invented, so the engine is never credited with signals the data never had.
     """
-    changing = row["proposed_account_number"] != vendor.known_account_number
+    act = row["action_type"]
+    intent = INTENT_FOLLOWUP if act == "NONE" else INTENT_CHANGE
+    action = {"REPLACE": ACTION_REPLACE, "ADD": ACTION_ADD, "NONE": ACTION_NONE}[act]
+    scope = {"REPLACE": SCOPE_BOTH, "ADD": SCOPE_FUTURE, "NONE": SCOPE_NONE}[act]
+
     urgent = row["urgency_language"] == "True"
+    channel = row["channel_manipulation"] == "True"
+    hedged = row["hedged_gstin"] == "True"
+
     return ExtractionResult(
         ok=True,
-        intent=INTENT_CHANGE if changing else INTENT_FOLLOWUP,
-        action=ACTION_REPLACE if changing else ACTION_NONE,
-        scope=SCOPE_BOTH if changing else SCOPE_NONE,
+        intent=intent, action=action, scope=scope,
         proposed_account_number=row["proposed_account_number"],
         proposed_ifsc=row["proposed_ifsc"],
         proposed_gstin=row["proposed_gstin"],
@@ -119,8 +128,10 @@ def features_to_extraction(row, vendor):
         amount=float(row["amount"]),
         urgency_detected=urgent,
         urgency_phrases=["(scenario urgency)"] if urgent else [],
-        hedging_detected=False, hedged_fields=[],
-        channel_manipulation_detected=False, channel_manipulation_phrases=[],
+        hedging_detected=hedged,
+        hedged_fields=["proposed_gstin"] if hedged else [],
+        channel_manipulation_detected=channel,
+        channel_manipulation_phrases=["(scenario redirect)"] if channel else [],
     )
 
 
@@ -130,6 +141,13 @@ class Result:
     def __init__(self, name, n):
         self.name, self.n = name, n
         self.tp = self.fp = self.tn = self.fn = 0
+        # A legitimate request BLOCKED is a customer-facing failure: the payout
+        # is rejected and the fund account deactivated. One merely HELD is an
+        # operational cost a human resolves. Lumping both into "false positive"
+        # hides which of the two you are actually causing.
+        self.false_block = 0
+        self.false_hold = 0
+        self.missed_fraud_allowed = 0
         self.outcomes = collections.Counter()
         self.rules = collections.Counter()
         self.by_scenario = collections.defaultdict(collections.Counter)
@@ -143,6 +161,16 @@ class Result:
     def precision(self):
         d = self.tp + self.fp
         return self.tp / d if d else 0.0
+
+    @property
+    def false_block_rate(self):
+        legit = self.fp + self.tn
+        return self.false_block / legit if legit else 0.0
+
+    @property
+    def false_hold_rate(self):
+        legit = self.fp + self.tn
+        return self.false_hold / legit if legit else 0.0
 
     @property
     def stepup_rate(self):
@@ -173,9 +201,14 @@ def evaluate(rows, vendors, index, decide_fn, name):
                 r.tp += 1
             else:
                 r.fn += 1
+                r.missed_fraud_allowed += 1
         else:
             if caught:
                 r.fp += 1
+                if final == BLOCK:
+                    r.false_block += 1
+                else:
+                    r.false_hold += 1
             else:
                 r.tn += 1
         r.by_scenario[row["scenario_type"]][final] += 1
@@ -186,8 +219,12 @@ def evaluate(rows, vendors, index, decide_fn, name):
 
 def payeeproof(row, vendor, index):
     ext = features_to_extraction(row, vendor)
-    fav = FAVResult("active", row["registered_name_returned"],
-                    int(row["name_match_score"]))
+    # FAV is a live dependency: sometimes unavailable, sometimes reporting a
+    # non-active account. Both branches previously had zero dataset coverage.
+    available = row["fav_name_available"] == "True"
+    fav = FAVResult(row["fav_account_status"],
+                    row["registered_name_returned"] if available else None,
+                    int(row["name_match_score"]) if available else None)
     return decide(ext, fav, vendor,
                   other_vendor_accounts=index,
                   near_duplicate=row["near_duplicate_invoice"] == "True",
@@ -220,47 +257,61 @@ def report(results, split, n):
     print("This measures the DECISION ENGINE only. It is an upper bound;")
     print("the extractor can only erode it. Not an end-to-end figure.")
     print()
-    print(f"  {'system':38s} {'recall':>8s} {'prec':>7s} {'step-ups':>10s} {'blocks':>8s}")
-    print("  " + "-" * 74)
+    print(f"  {'system':36s} {'recall':>7s} {'prec':>6s} {'step-up':>8s} "
+          f"{'FALSE BLOCK':>12s} {'false hold':>11s}")
+    print("  " + "-" * 84)
     for r in results:
         star = " *" if r.name.startswith("PayeeProof") else "  "
-        print(f"{star}{r.name:38s} {r.recall:8.1%} {r.precision:7.1%} "
-              f"{r.stepup_rate:9.1%} {r.block_rate:8.1%}")
+        print(f"{star}{r.name:36s} {r.recall:7.1%} {r.precision:6.1%} "
+              f"{r.stepup_rate:8.1%} {r.false_block_rate:11.1%} {r.false_hold_rate:11.1%}")
+    print()
+    print("  recall      = fraud not released      FALSE BLOCK = legit REJECTED (severe)")
+    print("  step-up     = callbacks required      false hold  = legit held for review")
     print()
 
     pp = next(r for r in results if r.name.startswith("PayeeProof"))
     null = next(r for r in results if r.name.startswith("null"))
-    if abs(pp.recall - null.recall) < 1e-9:
+    delta = pp.recall - null.recall
+    if abs(delta) < 1e-9:
         saved = null.stepup_rate - pp.stepup_rate
-        print(f"  PayeeProof matches the null baseline's recall ({pp.recall:.1%}) while")
-        print(f"  stepping up {saved:.0%} less often — {null.outcomes[STEP_UP] - pp.outcomes[STEP_UP]}"
-              f" fewer callbacks across {n} cases.")
-        print(f"  That reduction is the rules' entire measurable contribution here.")
+        print(f"  Recall ties the null baseline ({pp.recall:.1%}); the rules buy a "
+              f"{saved:.0%} lower step-up rate.")
     else:
-        print(f"  Recall differs from the null baseline "
-              f"({pp.recall:.1%} vs {null.recall:.1%}) — report both.")
+        print(f"  Recall vs null baseline: {pp.recall:.1%} vs {null.recall:.1%} "
+              f"({delta:+.1%}).")
+        if delta > 0:
+            print(f"  The rules catch {pp.tp - null.tp} fraud case(s) the callback "
+                  f"alone does not.")
+    if pp.false_block:
+        print(f"  {pp.false_block} legitimate request(s) REJECTED outright — "
+              f"{pp.false_block_rate:.1%} of all legitimate traffic.")
+    if pp.missed_fraud_allowed:
+        print(f"  {pp.missed_fraud_allowed} fraud case(s) RELEASED.")
     print()
 
-    print("  PayeeProof, final outcome by scenario:")
+    print("  PayeeProof, final outcome by scenario   (! marks a wrong outcome):")
     for t in SCENARIOS:
         d = pp.by_scenario[t]
         tot = sum(d.values())
-        parts = "  ".join(f"{k}={v}" for k, v in sorted(d.items()))
-        print(f"    {t:12s} n={tot:4d}   {parts}")
+        if not tot:
+            continue
+        fraud = t.startswith("fraud")
+        parts = []
+        for k, v in sorted(d.items()):
+            bad = (fraud and k == ALLOW) or ((not fraud) and k == BLOCK)
+            parts.append(f"{'!' if bad else ''}{k}={v}")
+        print(f"    {t:20s} n={tot:4d}   {'  '.join(parts)}")
     print()
     print("  rule fired:")
     for rule, c in pp.rules.most_common():
         print(f"    {rule:40s} {c:5d}")
     print()
 
-    distinct = len(set(
-        (t, tuple(sorted(pp.by_scenario[t].items()))) for t in SCENARIOS
-    ))
     print("  CAVEAT — read before quoting any number above.")
-    print(f"  The generator emits one fixed feature pattern per scenario, so these")
-    print(f"  {n} cases are {len(SCENARIOS)} distinct tests repeated with different random")
-    print("  digits. Effective sample size is 4. Three rules have zero coverage:")
-    print("  cross-contact reuse, FAV unavailable, and non-active account_status.")
+    print(f"  {len(SCENARIOS)} authored narratives, randomised within each. The scenarios and")
+    print("  the rules still share one team's mental model of fraud, so a blind spot")
+    print("  would appear in both the exam and the student. Fraud is oversampled")
+    print("  relative to real base rates for statistical power.")
     print()
 
 
@@ -270,8 +321,9 @@ def sweep(rows, vendors, index):
     print("=" * 78)
     print("R4 TIER-2 THRESHOLD SWEEP")
     print("=" * 78)
-    print(f"  {'threshold':>9s} {'recall':>8s} {'prec':>7s} {'step-ups':>10s} {'blocks':>8s}")
-    print("  " + "-" * 46)
+    print(f"  {'threshold':>9s} {'recall':>8s} {'prec':>7s} {'step-ups':>10s} "
+          f"{'FALSE BLOCK':>12s}")
+    print("  " + "-" * 52)
     for k in range(1, 6):
         def fn(row, vendor, idx, _k=k):
             d = payeeproof(row, vendor, idx)
@@ -284,11 +336,12 @@ def sweep(rows, vendors, index):
             return d
         r = evaluate(rows, vendors, index, fn, f"k={k}")
         print(f"  {k:9d} {r.recall:8.1%} {r.precision:7.1%} "
-              f"{r.stepup_rate:9.1%} {r.block_rate:8.1%}")
+              f"{r.stepup_rate:9.1%} {r.false_block_rate:11.1%}")
     print()
-    print("  Accuracy is flat across every threshold — the dataset cannot see this")
-    print("  knob at all. Step-up rate can. That is the whole argument for reporting")
-    print("  operational cost alongside detection.")
+    print("  Read the FALSE BLOCK column against recall: a lower threshold blocks")
+    print("  more fraud outright but rejects more legitimate vendors. That is the")
+    print("  real trade-off, and it was invisible while every scenario emitted one")
+    print("  fixed feature vector.")
     print()
 
 

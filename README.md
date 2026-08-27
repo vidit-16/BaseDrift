@@ -196,32 +196,31 @@ one, so quoting it would be meaningless.
 
 What the rules actually buy is measured against that null baseline:
 
-| system | recall | precision | step-up rate |
-|---|---|---|---|
-| null — hold everything, no rules | 100% | 100% | **100%** |
-| block everything | 100% | 39.2% | 0% |
-| **PayeeProof** | **100%** | **100%** | **26.3%** |
+| system | recall | precision | step-up | **false BLOCK** |
+|---|---|---|---|---|
+| null — hold everything, no rules | 85.0% | 87.2% | 100% | 0% |
+| block everything | 100% | 43.2% | 0% | 100% |
+| **PayeeProof** | **92.9%** | **87.5%** | **52.7%** | **0.6%** |
 
-Same fraud capture, **74% fewer callbacks** — 411 fewer manual verifications
-across 558 cases. That is the rules' entire measurable contribution here, and it
-is an operational-cost claim rather than a detection claim.
+`fraud_sim_swap` — where the attacker controls the phone as well — defeats the
+callback, so the do-nothing baseline tops out at 85%. PayeeProof reaches 92.9%,
+**catching 19 fraud cases the callback alone cannot**, while rejecting 0.6% of
+legitimate traffic.
 
-A second consequence: detection accuracy is **completely insensitive** to R4's
-Tier-2 threshold — 100%/100% whether it fires at 1 warn or 5. Step-up rate is
-not, moving from 26.3% to 46.4%. Tuning against accuracy would have been tuning
-against a flat surface.
+**A rejected legitimate vendor is not the same event as a held one.** A BLOCK
+rejects the payout and deactivates the fund account; a hold costs a phone call.
+Reporting both as one false-positive number hides which one you are causing, so
+they are tracked separately.
 
-Reproduce both: `python eval/rules_eval.py` and `--sweep`.
+Reproduce: `python eval/rules_eval.py`, and `--sweep` for the threshold curve.
 
-### What the dataset cannot yet do
+### What this evaluation still cannot tell you
 
-The generator emits one fixed feature pattern per scenario, so 558 dev cases are
-**four distinct tests** repeated with different random digits. Effective sample
-size is 4, not 558. Three rules have zero coverage: cross-contact account reuse,
-FAV unavailable, and any non-active `account_status`.
-
-`eval/rules_eval.py` prints this caveat under every run it produces, so the
-number cannot be quoted without it.
+Ten authored narratives, randomised within each — but the scenarios and the
+rules come from one team's mental model of fraud, so a blind spot would appear
+in both the exam and the student. Fraud is oversampled relative to real base
+rates for statistical power. `eval/rules_eval.py` prints this under every run,
+so no number leaves without it.
 
 ---
 
@@ -260,6 +259,27 @@ resolved destination now comes from the payout's fund account, the message's cla
 a labelled fallback for offline analysis only, and every audit record states which of
 the two was validated.
 
+**Contextual signals alone could reject a legitimate vendor.** R4 blocked on
+`REPLACE + new account + any 2 Tier-2 warns`. Both inputs are true of an
+ordinary legitimate bank change — a new account is what changing banks *means*,
+and urgency plus an unfamiliar domain is what an acquired company's finance team
+looks like. It also contradicted the rule table's own stated invariant that
+Tier 2 is supporting evidence and never decisive alone.
+
+Measured: **it rejected 15.8% of all legitimate traffic** — 49 of 60
+acquisition/rebrand cases — and no threshold repaired it. Tightening to 4 warns
+cut false blocks to 0.6% but dropped recall to 85.4%, level with doing nothing.
+
+R4 now requires evidence of *deliberate impersonation* — currently a typosquat
+domain, carried as an extensible `deception` flag on `Signal` — corroborated by
+at least one contextual signal. False blocks fell to **0.6%** and precision rose
+from 74.5% to 87.5%.
+
+The alternative was tested rather than assumed: treating any domain that embeds
+the vendor's name as deception recovers recall to 97.9% but returns false blocks
+to 15.8%, because a rebrand embeds the vendor's name too. That ambiguity is real
+rather than a detector gap — see the limit stated below.
+
 **Missing data was counted as evidence of fraud.** `Signal` had three states,
 and `WARN` was carrying two incompatible meanings: "I checked this and it looks
 wrong" and "I could not check this". A message that simply omitted an amount
@@ -282,6 +302,19 @@ Matching is now on the concept, and that same case now correctly warns.
 ---
 
 ## Known open flaws
+
+**A compromised callback is unrecoverable from evidence.** When the attacker
+controls the vendor's phone as well as the request — SIM swap, ported number, an
+insider — and the sending domain merely *claims* affiliation
+(`vendor-billing.com`) rather than impersonating it (`vend0r.com`), nothing
+observable separates the request from a genuine rebrand. 17 such cases are
+released on the dev set.
+
+This is a limit, not a tuning problem: the two populations are identical on every
+signal available. The mitigation is a second verification channel — a
+known-device confirmation, a countersignature, a hold window after a recent SIM
+change — not more domain heuristics. Recognising that is precisely why R4 no
+longer tries to close the gap by rejecting anything unusual.
 
 **Extraction is not reproducible run to run.** The semantic layer is called at
 `temperature=0.0`, but repeated calls on the identical hero email return different

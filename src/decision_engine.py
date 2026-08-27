@@ -51,7 +51,14 @@ TIER 1 — identity binding (against vendor master, never against request)
 
 TIER 2 — contextual signals (supporting evidence, never decisive alone)
 
-  sender_domain:          match PASS / mismatch WARN / not found INCONCLUSIVE
+  sender_domain:          match PASS
+                          lookalike of the known domain  WARN + DECEPTION
+                          some other domain              WARN
+                          not found                      INCONCLUSIVE
+  A typosquat and a rebrand are both "not the known domain" and are not
+  remotely the same evidence. balaj1logistic.com is built to be mistaken for
+  balajilogistic.com; balajilogisticsgroup.com is what an acquisition looks
+  like. Only the first is evidence of intent to deceive.
   urgency:                absent PASS / present WARN
   channel_manipulation:   absent PASS / present WARN
   payment_pattern:        within 15% of avg and no flags PASS
@@ -96,8 +103,32 @@ DECISION POLICY — first match wins
 
   3. any Tier 1 FAIL                            BLOCK
 
-  4. REPLACE + new account + >=2 Tier 2 WARN    BLOCK
+  4. REPLACE + new account + a DECEPTION signal + >=1 Tier 2 WARN   BLOCK
      (WARN only — INCONCLUSIVE signals never contribute to a rejection)
+
+     A rejection requires evidence that someone is trying to be mistaken for
+     the vendor. Contextual signals corroborate that evidence; they cannot
+     substitute for it.
+
+     This rule previously fired on REPLACE + new account + any 2 Tier 2 WARNs.
+     Both of those inputs are true of an ordinary, legitimate bank change: a
+     new account is what changing banks MEANS, and urgency plus an unfamiliar
+     domain is what an acquired company's finance team looks like. Measured on
+     the dev set, that version rejected 15.8% of all legitimate traffic — 49 of
+     60 rebrand cases — and no threshold fixed it: tightening to 4 warns cut
+     false blocks to 0.6% but dropped recall to 85.4%, no better than holding
+     every payout and phoning the vendor.
+
+     It also contradicted this table's own stated invariant that Tier 2 is
+     "never decisive alone". A new account is the only Tier 1 input, and it
+     carries no evidence of fraud whatsoever.
+
+     Note what follows: for a compromised MAILBOX — real domain, correct GSTIN,
+     genuine name match — there is no deception signal and no identity conflict.
+     Such a request is indistinguishable from a legitimate change on evidence
+     alone, and it correctly falls through to STEP_UP. The callback, not the
+     rule table, is what resolves it. That is the honest boundary of what
+     evidence can do here.
      the BEC pattern: cut off the old destination, under pressure,
      from an unverified channel
 
@@ -154,9 +185,15 @@ NOT_CLEAN = (WARN, INCONCLUSIVE, FAIL)
 class Signal:
     name:   str
     tier:   int
-    result: str      # PASS | WARN | FAIL
+    result: str      # PASS | WARN | INCONCLUSIVE | FAIL
     detail: str
     source: str      # provenance: where the evidence came from
+    # True when this signal is evidence that someone is trying to be MISTAKEN
+    # for the vendor, as distinct from evidence that something is merely
+    # unusual. Only deception may drive a rejection (R4); everything else
+    # corroborates. Kept as a flag rather than a tier so future deception
+    # signals can be added without reshuffling the tiers.
+    deception: bool = False
 
 
 @dataclass
@@ -236,6 +273,50 @@ def resolve_destination(ext: ExtractionResult,
     if ext.proposed_account_number:
         return ext.proposed_account_number, "email_claim_only"
     return None, "unresolved"
+
+
+def _edit_distance(a: str, b: str) -> int:
+    """Levenshtein. Small and dependency-free — requirements.txt is one line."""
+    if a == b:
+        return 0
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+# A typosquat is usually one or two substituted characters — the whole point is
+# that it survives a glance. Anything further away is a different name, which
+# may be a rebrand, a subsidiary, or an unrelated party, but is not an attempt
+# to be misread as this vendor.
+LOOKALIKE_MAX_EDITS = 2
+
+
+def is_lookalike_domain(sender: str, known: str) -> bool:
+    """
+    True when `sender` appears built to be mistaken for `known`.
+
+    Deliberately narrow. A domain that is merely DIFFERENT is not evidence of
+    deception — acquisitions and group consolidations produce those routinely,
+    and treating them as fraud is what rejected legitimate vendors.
+    """
+    if not sender or not known:
+        return False
+    a, b = sender.strip().lower(), known.strip().lower()
+    if a == b:
+        return False
+    # Compare the registrable label, so a TLD change alone is not a typosquat.
+    sa, sb = a.split(".")[0], b.split(".")[0]
+    if sa == sb:
+        return False
+    if abs(len(sa) - len(sb)) > LOOKALIKE_MAX_EDITS:
+        return False
+    return _edit_distance(sa, sb) <= LOOKALIKE_MAX_EDITS
 
 
 def _hedged(hedged_fields: List[str], *concepts: str) -> bool:
@@ -368,8 +449,15 @@ def check_domain(ext: ExtractionResult, v: VendorRecord) -> Signal:
     if d.lower() == v.known_domain.lower():
         return Signal("sender_domain", 2, PASS, f"{d} matches known domain",
                       "email_header vs vendor_master")
+    if is_lookalike_domain(d, v.known_domain):
+        return Signal("sender_domain", 2, WARN,
+                      f"{d} is a lookalike of {v.known_domain} — built to be "
+                      f"misread as this vendor",
+                      "email_header vs vendor_master",
+                      deception=True)
     return Signal("sender_domain", 2, WARN,
-                  f"{d} != known {v.known_domain}",
+                  f"{d} != known {v.known_domain} (different domain, not a "
+                  f"lookalike — could be a rebrand)",
                   "email_header vs vendor_master")
 
 
@@ -538,16 +626,22 @@ def decide(ext: ExtractionResult,
 
     # Rule 4 — BEC pattern: sever the old destination, under pressure,
     # from an unverified channel
-    if ext.action == ACTION_REPLACE and new_account and len(t2_warn) >= 2:
+    deception = [sig for sig in t1 + t2 if sig.deception]
+    if (ext.action == ACTION_REPLACE and new_account
+            and deception and len(t2_warn) >= 1):
         return Decision(
             outcome=BLOCK,
             rule_fired="R4_bec_pattern",
             reason=("Request would REPLACE the existing payout destination with a "
-                    "previously unseen account, alongside " + str(len(t2_warn)) +
-                    " contextual risk signals (" +
+                    "previously unseen account, and carries evidence of deliberate "
+                    "impersonation (" +
+                    "; ".join(s.detail for s in deception) + "), corroborated by " +
+                    str(len(t2_warn)) + " contextual risk signal(s) (" +
                     ", ".join(s.name for s in t2_warn) +
                     "). Every bank-level check may pass; change authorization is absent."),
-            triggered_by=["account_continuity"] + [s.name for s in t2_warn],
+            triggered_by=(["account_continuity"]
+                          + [s.name for s in deception]
+                          + [s.name for s in t2_warn]),
             tier1=t1, tier2=t2,
             checked_destination=dest, destination_source=dest_src,
         )

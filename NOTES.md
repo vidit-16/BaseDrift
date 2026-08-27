@@ -95,29 +95,32 @@ P0.3  decide() and run_case() take destination_account_number, resolved from the
       claim and records provenance in Decision.destination_source.
 P0.4  _hedged() matches the concept inside normalised field names. "gst_number"
       and "gst" were both missed before and failed open.
+P0.6  R4 now requires evidence of deliberate impersonation, not just
+      contextual risk. It fired on REPLACE + new account + any 2 Tier-2 warns;
+      both are true of a legitimate bank change, and it rejected 15.8% of
+      legitimate traffic (49/60 rebrands). No threshold fixed it. Now needs a
+      deception signal (Signal.deception, currently typosquat domains by edit
+      distance) plus >=1 contextual warn. False blocks 15.8% -> 0.6%.
+      KNOWN LIMIT: sim-swap fraud from an affiliation-claiming domain
+      (vendor-billing.com) is indistinguishable from a rebrand on evidence.
+      17 released on dev. The fix is a second verification channel, NOT more
+      domain heuristics — the tested alternative put false blocks back to 15.8%.
 P0.5  Signal gained INCONCLUSIVE. WARN meant both "looks wrong" and "could not
       check"; only the former should reach a BLOCK. Reclassifying continuity's
       unresolved case briefly reopened the R2 bypass — the regression test from
       P0.1 caught it. R2 now holds on anything that is not a clean PASS.
 
-All five have regression tests in tests/test_decision_engine.py (22 tests, no API
+All six have regression tests in tests/test_decision_engine.py (29 tests, no API
 key). Verified they fail against the pre-P0 engine — do not assume a green run
 means anything until you have checked a test can fail.
 
 Then:
-1. generator variance. The dataset is FOUR distinct feature patterns wearing
-   800 costumes — every case in a scenario is identical but for random digits,
-   so effective n=4. Nothing can be tuned against it: R4's threshold gives
-   identical accuracy at 1 and at 5. Needed, derived from the threat model and
-   committed BEFORE touching R4, or we author exam and student together again:
-     - fraud_hard near-misses carrying only 1 Tier-2 warn
-     - legit_hard variants carrying 2 (a busy but legitimate vendor)
-     - cross-contact reuse (the FAIL branch has zero coverage)
-     - FAV unavailable (name_match_score None) and non-active account_status
-2. R4 weighting. Only after 1. urgency currently counts the same as a lookalike
-   domain, and urgency is exactly what legit_hard fires on — it sits ONE warn
-   below the BLOCK threshold, so "please reply on this thread" flips a genuine
-   vendor to rejected.
+1. DONE — generator variance. 10 narratives, 90 distinct feature patterns
+   (was 4), randomised within each scenario. Adds compromised-mailbox, patient,
+   mule-account and sim-swap fraud; rebrand, multi-account-add and unreachable
+   legitimate cases; varying FAV availability and account_status.
+2. second verification channel for the sim-swap gap (P0.6). The callback is a
+   single point of failure and the rules provably cannot cover it.
 3. case -> email renderer. BLOCKS the extraction eval: cases_*.csv hold feature
    rows with no message text, and run_case() takes email_text. Must not leak
    the keyword baseline's trigger vocabulary — see the README's v1 note.

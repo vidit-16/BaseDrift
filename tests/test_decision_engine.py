@@ -29,6 +29,7 @@ from extractor import (  # noqa: E402
 from decision_engine import (  # noqa: E402
     decide, FAVResult, VendorRecord,
     ALLOW, STEP_UP, BLOCK,
+    WARN as WARN_,
 )
 
 # ── Fixtures ──────────────────────────────────────────────────────────
@@ -265,6 +266,91 @@ def test_unresolvable_destination_on_followup_still_holds():
     assert d.outcome == STEP_UP
     assert d.payout_allowed is False
     assert d.tier1[0].result == INCONCLUSIVE
+
+
+# ── R4 requires evidence of deliberate impersonation ─────────────────
+# R4 used to fire on REPLACE + new account + any 2 Tier-2 warns. Both inputs are
+# true of an ordinary legitimate bank change, so on the dev set it rejected
+# 15.8% of legitimate traffic — 49 of 60 acquisition/rebrand cases. No threshold
+# fixed it: tightening to 4 warns cut false blocks to 0.6% but dropped recall to
+# 85.4%, no better than holding every payout and phoning the vendor.
+
+def test_lookalike_detects_typosquats():
+    from decision_engine import is_lookalike_domain
+    known = "balajilogistic.com"
+    for squat in ("balaj1logistic.com", "ba1ajilogistic.com", "balajilog1stic.com"):
+        assert is_lookalike_domain(squat, known), squat
+
+
+def test_lookalike_does_not_flag_a_rebrand():
+    """An acquired company's new domain is not an impersonation attempt."""
+    from decision_engine import is_lookalike_domain
+    known = "balajilogistic.com"
+    for legit in ("balajilogisticgroup.com", "balajilogisticglobal.com",
+                  "totallyunrelated.com", "balajilogistic.com"):
+        assert not is_lookalike_domain(legit, known), legit
+
+
+def test_typosquat_plus_one_warn_blocks():
+    e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+            account=NEW_ACCT, domain="balaj1logistic.com", urgency=True)
+    d = run(e, dest=NEW_ACCT)
+    assert d.outcome == BLOCK
+    assert d.rule_fired == "R4_bec_pattern"
+
+
+def test_rebrand_domain_with_many_warns_does_not_block():
+    """
+    The regression that mattered. A genuinely renamed vendor, in a hurry, asking
+    to be reached at a new address — three contextual warns and no impersonation.
+    Must hold for a callback, never reject.
+    """
+    e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+            account=NEW_ACCT, domain="balajilogisticgroup.com",
+            urgency=True, channel=True, amount=500000.0)
+    d = run(e, dest=NEW_ACCT)
+    assert d.outcome != BLOCK, f"rejected a legitimate rebrand via {d.rule_fired}"
+    assert d.outcome == STEP_UP
+
+
+def test_contextual_signals_alone_never_reject():
+    """
+    Tier 2 is documented as 'supporting evidence, never decisive alone'. R4
+    violated that: a new account plus two contextual warns was a rejection, and
+    a new account is simply what changing banks means.
+    """
+    e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+            account=NEW_ACCT, domain=VENDOR.known_domain,
+            urgency=True, channel=True, amount=999999.0)
+    d = run(e, dest=NEW_ACCT)
+    assert not any(s.deception for s in d.tier1 + d.tier2)
+    assert d.outcome == STEP_UP
+
+
+def test_deception_flag_is_set_only_on_impersonation():
+    from decision_engine import check_domain
+    squat = check_domain(ext(domain="balaj1logistic.com"), VENDOR)
+    rebrand = check_domain(ext(domain="balajilogisticgroup.com"), VENDOR)
+    match = check_domain(ext(domain=VENDOR.known_domain), VENDOR)
+    assert squat.deception is True
+    assert rebrand.deception is False
+    assert match.deception is False
+    # Both non-matching domains still hold the payout; only one may reject it.
+    assert squat.result == WARN_ and rebrand.result == WARN_
+
+
+def test_compromised_mailbox_falls_through_to_callback():
+    """
+    Real domain, correct GSTIN, good name match, new account. There is no
+    deception signal and no identity conflict, so evidence cannot separate this
+    from a legitimate change. Holding for the callback is the correct answer,
+    and pretending otherwise would mean rejecting legitimate vendors.
+    """
+    e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+            account=NEW_ACCT, domain=VENDOR.known_domain, urgency=False)
+    d = run(e, dest=NEW_ACCT)
+    assert d.outcome == STEP_UP
+    assert d.needs_callback is True
 
 
 # ── Guards on behaviour that must NOT have changed ───────────────────
