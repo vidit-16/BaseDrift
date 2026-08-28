@@ -16,6 +16,8 @@ question FAV, Reverse Penny Drop, and Approval Workflow all leave open.
 Groq free tier. No credit card. console.groq.com
 
 ## Layout
+    COMPLIANCE.md           regime, what is satisfied, what is not. Read it
+                            before widening what the model sees.
     src/llm_client.py       one place that talks to Groq; model auto-detect,
                             429 retry, reasoning-model handling
     src/extractor.py        THE ONLY LLM STEP. semantic layer + claims.
@@ -81,6 +83,9 @@ Groq free tier. No credit card. console.groq.com
   action carrying requires_human_confirmation.
 - Channel 2 (penny drop from the old account) OUTRANKS channel 1 (callback).
   Never make them either/or: sim-swap fraud passes the callback.
+- Every extraction records model_used and prompt_hash. MODEL_PREFERENCE
+  auto-detects, so without them an audit cannot say which model read the
+  document. Do not remove them — see COMPLIANCE.md.
 - The webhook's safe state is INACTION. A pending payout stays pending unless
   something explicitly approves it, so every error path must simply not
   approve. Never add a "default to allow" branch, for any reason.

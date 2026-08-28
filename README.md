@@ -141,6 +141,8 @@ src/webhook.py          payout.pending handler; signature verification,
 src/webhook_app.py      ASGI entry point for uvicorn
 src/dashboard.py        operator view: decisions, and the evidence behind each
 src/webhook_demo.py     drives the real endpoint over real signed HTTP
+COMPLIANCE.md           what production would have to satisfy, and why
+                        anonymisation is not available to this design
 tests/                  150 tests across 6 suites, none needing an API key
                         run them all: python tests/run_all.py
 eval/rules_eval.py      decision-engine scoring vs baselines, no API key needed
@@ -616,6 +618,16 @@ operation:
 - **The Payout Approval API is not enabled by default** — it requires Technology
   Partner/OAuth access, which is a commercial prerequisite rather than a code
   one.
+
+**Compliance is its own document.** [COMPLIANCE.md](COMPLIANCE.md) sets out the
+regime that applies, what this design already satisfies, and what it does not.
+The short version: the usual answer — remove the personal data — is unavailable
+here, because the personal data *is* the input. The model has to read the vendor's
+name and account number to know a change is being requested at all. So the
+controls are boundary, provenance and retention rather than anonymisation, and
+the largest open question is that inference currently leaves the country. The
+pinned model is open-weight and `src/llm_client.py` is the only place that talks
+to a provider, so bringing inference in-country is a one-file change.
 
 ---
 

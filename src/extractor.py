@@ -36,6 +36,7 @@ Guarantees to callers:
   - hidden/invisible characters stripped before text reaches the LLM
 """
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -198,6 +199,11 @@ EXTRACTION RULES
 - hedging_detected: true if a claim is qualified ("should be", "I think", "same as before")
 - channel_manipulation_detected: true if the sender redirects communication away from an existing channel"""
 
+# Which prompt produced a reading is part of the reading. Two runs months
+# apart are not comparable if the prompt changed between them, and a payment
+# decision has to be reconstructable from its audit record alone.
+PROMPT_HASH = hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+
 
 @dataclass
 class ExtractionResult:
@@ -241,6 +247,12 @@ class ExtractionResult:
     document_truncated:   bool = False
     hidden_chars_removed: int  = 0
 
+    # Provenance. MODEL_PREFERENCE auto-detects, so without recording it the
+    # audit cannot say which model read the document — and "an AI decided" is
+    # not an auditable statement. See COMPLIANCE.md.
+    model_used:  Optional[str] = None
+    prompt_hash: Optional[str] = None
+
     def to_dict(self):
         return {
             "ok": self.ok,
@@ -248,6 +260,8 @@ class ExtractionResult:
             "evidence_source": self.evidence_source,
             "document_truncated": self.document_truncated,
             "hidden_chars_removed": self.hidden_chars_removed,
+            "model_used": self.model_used,
+            "prompt_hash": self.prompt_hash,
             "semantic": {
                 "intent": self.intent,
                 "action": self.action,
@@ -396,9 +410,15 @@ def extract(raw_document: str, model=None) -> ExtractionResult:
         return ExtractionResult(ok=False,
                                 failure_reason="document is empty after sanitization")
 
-    parsed, err = llm_client.call_json(SYSTEM_PROMPT, doc.text, model=model)
+    meta = {}
+    parsed, err = llm_client.call_json(SYSTEM_PROMPT, doc.text, model=model,
+                                       meta=meta)
     if err:
-        return ExtractionResult(ok=False, failure_reason=err)
+        # Provenance matters on failures too: "which model was unreachable"
+        # is the difference between an outage and a bad deployment.
+        return ExtractionResult(ok=False, failure_reason=err,
+                                model_used=meta.get("model"),
+                                prompt_hash=PROMPT_HASH)
 
     # Everything from here to the return is wrapped. The caller's only
     # guarantee is that it gets an ExtractionResult back, and that guarantee
@@ -411,13 +431,15 @@ def extract(raw_document: str, model=None) -> ExtractionResult:
                 ok=False,
                 failure_reason=f"schema validation failed: {schema_err}",
                 raw_llm_output=_safe_dump(parsed),
+                model_used=meta.get("model"), prompt_hash=PROMPT_HASH,
             )
-        return _build_result(parsed, doc)
+        return _build_result(parsed, doc, meta.get("model"))
     except Exception as e:  # noqa: BLE001
         return ExtractionResult(
             ok=False,
             failure_reason=f"malformed provider output ({type(e).__name__}: {e})",
             raw_llm_output=_safe_dump(parsed),
+            model_used=meta.get("model"), prompt_hash=PROMPT_HASH,
         )
 
 
@@ -428,7 +450,7 @@ def _safe_dump(parsed) -> str:
         return repr(parsed)[:500]
 
 
-def _build_result(parsed: dict, doc) -> ExtractionResult:
+def _build_result(parsed: dict, doc, model_used=None) -> ExtractionResult:
 
     gstin = _s(parsed["proposed_gstin"])
     domain = _s(parsed["sender_domain"])
@@ -438,6 +460,8 @@ def _build_result(parsed: dict, doc) -> ExtractionResult:
     return ExtractionResult(
         ok=True,
         raw_llm_output=json.dumps(parsed)[:1000],
+        model_used=model_used,
+        prompt_hash=PROMPT_HASH,
         document_truncated=doc.truncated,
         hidden_chars_removed=doc.hidden_chars_removed,
 

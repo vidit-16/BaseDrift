@@ -98,10 +98,16 @@ def detect_model(api_key=None, force=False):
 
 
 def call(system_prompt, user_content, max_tokens=DEFAULT_MAX_TOKENS,
-         temperature=0.0, model=None, api_key=None, max_retries=4):
+         temperature=0.0, model=None, api_key=None, max_retries=4, meta=None):
     """
     Returns (text, error). Exactly one is None.
     Retries on 429. Never raises.
+
+    `meta`, if given, is filled with the model that actually served the call.
+    MODEL_PREFERENCE auto-detects, so the caller frequently does not know which
+    model produced a result — and an audit record for a payment decision has to
+    say which one did. Passing a dict rather than changing the return arity
+    keeps every existing caller and test stub working.
     """
     api_key = api_key or get_api_key()
     if not api_key:
@@ -111,6 +117,8 @@ def call(system_prompt, user_content, max_tokens=DEFAULT_MAX_TOKENS,
         model, err = detect_model(api_key)
         if err:
             return None, err
+    if meta is not None:
+        meta["model"] = model
 
     payload = {
         "model": model,
@@ -179,6 +187,7 @@ def call_json(system_prompt, user_content, **kwargs):
     """
     Same as call(), but parses JSON out of the response.
     Returns (dict, error). Tolerates markdown fences and surrounding prose.
+    Accepts and forwards `meta` — see call().
     """
     text, err = call(system_prompt, user_content, **kwargs)
     if err:
