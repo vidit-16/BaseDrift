@@ -1,0 +1,60 @@
+name: tests
+
+# Everything here runs without an API key. That is deliberate: the extractor
+# suite stubs the model client rather than calling it, because live output is
+# not reproducible run to run and any test asserting on it would be flaky by
+# construction. CI that needs a secret to be green is CI nobody trusts.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate the dataset
+        # cases_holdout.csv is deliberately not committed, and rules_eval reads
+        # it only when asked for the holdout split. Regenerating is deterministic
+        # (seed 42), so CI reproduces the committed CSVs exactly.
+        run: python data/generate_data.py
+
+      - name: Committed data still matches the generator
+        run: git diff --exit-code -- data/vendor_master.csv data/cases_dev.csv
+
+      - name: Tests
+        run: python tests/run_all.py
+
+      - name: Keyword baseline must stay beaten
+        run: python eval/ablation.py
+
+      - name: Rules eval against baselines
+        run: python eval/rules_eval.py
+
+      - name: Renderer must not leak the baseline's vocabulary
+        run: python eval/extraction_eval.py --leakage-only
+
+      - name: Demo refuses to print a verdict without a key
+        run: |
+          if python src/pipeline.py; then
+            echo "pipeline.py exited 0 without GROQ_API_KEY — it must refuse"
+            exit 1
+          fi
+
+      - name: Signed webhook end to end
+        run: python src/webhook_demo.py

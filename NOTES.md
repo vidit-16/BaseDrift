@@ -37,6 +37,12 @@ Groq free tier. No credit card. console.groq.com
                             is evidence, not an error — see R2.
                             The handler NEVER decides; it calls decide().
     src/webhook_app.py      ASGI entry.  uvicorn webhook_app:app --app-dir src
+                            Store starts EMPTY on purpose — no fund accounts
+                            resolve, so everything holds. PAYEEPROOF_SEED_DEMO=1
+                            loads fixtures; never make that a fallback.
+    src/dashboard.py        operator view. Shows what the webhook response
+                            withholds, ON PURPOSE — different audience. Needs
+                            auth in front of it in any real deployment.
     src/webhook_demo.py     five signed scenarios over real HTTP.
     src/pipeline.py         run_case() — end to end, returns audit dict.
                             `python src/pipeline.py` runs the hero demo.
@@ -73,6 +79,8 @@ Groq free tier. No credit card. console.groq.com
 - NOTHING here calls Razorpay. razorpay_actions() emits action PLANS. Do not
   describe the system as calling approve/reject, and do not auto-execute any
   action carrying requires_human_confirmation.
+- Channel 2 (penny drop from the old account) OUTRANKS channel 1 (callback).
+  Never make them either/or: sim-swap fraud passes the callback.
 - The webhook's safe state is INACTION. A pending payout stays pending unless
   something explicitly approves it, so every error path must simply not
   approve. Never add a "default to allow" branch, for any reason.
@@ -89,8 +97,9 @@ Groq free tier. No credit card. console.groq.com
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
 data generator + generated dev/holdout splits.
 
-128 tests across 5 suites, none needing an API key: `python tests/run_all.py`
-(decision_engine 32, extractor 32, render 17, verifier+pipeline 19, webhook 30).
+150 tests across 6 suites, none needing an API key: `python tests/run_all.py`
+(decision_engine 32, eval_harness 9, extractor 30, render 17,
+verifier+pipeline 25, webhook 37).
 
 An early version of this file claimed 38 unit tests when zero existed. The
 claim was removed at the time rather than quietly left in place; the suites
@@ -166,30 +175,29 @@ Then:
    (was 4), randomised within each scenario. Adds compromised-mailbox, patient,
    mule-account and sim-swap fraud; rebrand, multi-account-add and unreachable
    legitimate cases; varying FAV availability and account_status.
-2. second verification channel for the sim-swap gap (P0.6). The callback is a
-   single point of failure and the rules provably cannot cover it.
+2. DONE — second verification channel. Reverse Penny Drop from the account
+   ALREADY ON FILE. Channel 2 is AUTHORITATIVE, channel 1 (callback)
+   corroborates — "either passes" is wrong because sim-swap has the callback
+   PASSING. sim_swap releases 17 -> 0, legit_unreachable holds 30 -> 0,
+   recall 92.9% -> 100%, false BLOCK unchanged at 0.6%, false hold 9.5% ->
+   11.7%. controls_existing_account=None means channel 2 was not attempted
+   (RPD is enabled on request) and channel 1 decides alone, as before.
 3. DONE — data/render.py. Deterministic per-case seeds, renderer version
    + sha256 per message, and a leakage guard importing BANNED_VOCABULARY from
    the baseline's own trigger lists. Baseline scores 0/556 on the output.
-   OLD NOTE — case -> email renderer. BLOCKED the extraction eval: cases_*.csv hold feature
-   rows with no message text, and run_case() takes email_text. Must not leak
-   the keyword baseline's trigger vocabulary — see the README's v1 note.
 4. DONE — eval/extraction_eval.py. 60-case stratified sample, 1 run,
    gpt-oss-120b: intent 100%, scope 100%, action 96.6%, claims 94.9-100%,
    channel-manipulation recall only 70.6%. End to end real == ideal, 98.3%
    same rule. Disk cache keyed by email sha + model + prompt hash +
    NORMALIZER_VERSION — bump the last one whenever claim normalisation
    changes, or stale entries outlive the fix.
-   OLD NOTE — extraction eval — email text through the real extractor, compared against
-   the generator's features. Measures the EXTRACTOR; eval/rules_eval.py already
-   measures the rules. Keep them separate: rules tuning must stay instant and
-   deterministic. Cache extractions to disk so re-scoring costs nothing, and
-   remember extraction is non-deterministic — report a run count and spread.
+   Keep the two evals SEPARATE: rules tuning must stay instant and
+   deterministic, and this one is neither.
 5. DONE — webhook handler for payout.pending. 26 tests, no API key.
-6. DONE — unit tests for extractor / verifier / pipeline. 111 tests total
+6. DONE — unit tests for extractor / verifier / pipeline. 137 tests total
    across 5 suites (decision_engine 32, extractor 32, render 17,
-   verifier+pipeline 19, webhook 30). `python tests/run_all.py`. None need an API key: the extractor
+   verifier+pipeline 19, webhook 37). `python tests/run_all.py`. None need an API key: the extractor
    suite stubs llm_client, since live output is non-deterministic and any test
    asserting on it would be flaky by construction.
-7. dashboard
+7. DONE — dashboard. GET / and /case/{payout_id}, mounted on the webhook app.
 8. holdout run (once) + pitch video

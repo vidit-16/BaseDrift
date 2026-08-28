@@ -56,8 +56,16 @@ def test_callback_never_uses_a_number_from_the_request():
     """
     import inspect
     params = set(inspect.signature(verifier.verify).parameters)
+    # Reviewed set. Adding a parameter FAILS this on purpose — each one has to
+    # be checked for whether a request-supplied contact could arrive through it.
+    # controls_existing_account is a boolean outcome of a penny drop, not a
+    # contact, so it is safe. A parameter named anything like a phone number is
+    # not.
     assert params == {"decision", "vendor", "callback_reaches_known_contact",
-                      "case_id"}, params
+                      "case_id", "controls_existing_account"}, params
+    assert not any(w in p.lower() for p in params
+                   for w in ("phone", "contact_number", "sender", "email",
+                             "reply_to")), params
 
     # And with an attacker's number all over the extraction, the callback is
     # still placed to the vendor master's number.
@@ -108,6 +116,76 @@ def test_verification_ids_are_unique():
     ids = {verifier.verify(dec(STEP_UP), VENDOR, True, "C1").verification_id
            for _ in range(20)}
     assert len(ids) == 20
+
+
+# ══ The second channel ════════════════════════════════════════════════
+# "Either channel passes" was the obvious rule and it is wrong: SIM-swap fraud
+# has channel 1 PASSING, because the attacker holds the phone. Channel 2 is
+# authoritative; channel 1 corroborates.
+
+def test_penny_drop_from_the_old_account_releases():
+    r = verifier.verify(dec(STEP_UP), VENDOR, False, "C1",
+                        controls_existing_account=True)
+    assert r.outcome == verifier.CONTROL_PROVEN
+    assert r.final_outcome == ALLOW
+    assert r.payout_allowed is True
+    # It tests the account on file, not anything from the request.
+    assert r.contact_used == VENDOR.known_account_number
+
+
+def test_a_confirmed_callback_cannot_overrule_a_failed_penny_drop():
+    """
+    THE sim-swap case. The attacker answers the phone, so channel 1 passes —
+    and an either/or rule would release exactly the fraud this exists to stop.
+    """
+    r = verifier.verify(dec(STEP_UP), VENDOR, True, "C1",
+                        controls_existing_account=False)
+    assert r.payout_allowed is False
+    assert r.final_outcome == STEP_UP
+    assert r.outcome == verifier.CONTESTED
+    assert r.escalated is True
+
+
+def test_neither_channel_holds_and_escalates():
+    r = verifier.verify(dec(STEP_UP), VENDOR, False, "C1",
+                        controls_existing_account=False)
+    assert r.outcome == verifier.UNREACHABLE
+    assert r.payout_allowed is False
+    assert r.escalated is True
+
+
+def test_penny_drop_rescues_an_unreachable_vendor():
+    """
+    A genuine vendor who cannot answer the phone but still banks where they
+    always have. Previously held for want of a phone call.
+    """
+    r = verifier.verify(dec(STEP_UP), VENDOR, False, "C1",
+                        controls_existing_account=True)
+    assert r.payout_allowed is True
+
+
+def test_channel_two_not_attempted_falls_back_to_the_callback():
+    """
+    RPD is enabled on request, not by default. None means it was not attempted,
+    and behaviour must be exactly what it was before the channel existed.
+    """
+    yes = verifier.verify(dec(STEP_UP), VENDOR, True, "C1",
+                          controls_existing_account=None)
+    no = verifier.verify(dec(STEP_UP), VENDOR, False, "C1",
+                         controls_existing_account=None)
+    assert yes.outcome == verifier.CONFIRMED and yes.payout_allowed is True
+    assert no.outcome == verifier.UNREACHABLE and no.payout_allowed is False
+
+
+def test_the_second_channel_never_creates_a_rejection():
+    """
+    It resolves holds; it must not manufacture blocks. A legitimate vendor whose
+    old account is genuinely closed is held for a human, never rejected.
+    """
+    for callback in (True, False):
+        r = verifier.verify(dec(STEP_UP), VENDOR, callback, "C1",
+                            controls_existing_account=False)
+        assert r.final_outcome != BLOCK
 
 
 # ══ verifier: the API actions a decision maps to ══════════════════════

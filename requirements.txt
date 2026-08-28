@@ -1,3 +1,6 @@
+# Python 3.10+ (developed and measured on 3.12).
+# Pure Python: no compiled extensions, no build step.
+
 requests>=2.28.0
 
 # Webhook handler (src/webhook.py). The decision engine, the ablation and

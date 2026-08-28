@@ -11,6 +11,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITES = [
     "test_decision_engine.py",
+    "test_eval_harness.py",
     "test_render.py",
     "test_extractor.py",
     "test_verifier_pipeline.py",

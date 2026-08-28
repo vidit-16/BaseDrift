@@ -37,6 +37,7 @@ import json
 import os
 import sys
 import time
+from typing import Optional
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
@@ -70,13 +71,54 @@ def cache_path(email_sha, model, run):
     return os.path.join(CACHE_DIR, f"{key}.json")
 
 
+# Transport failures are not extraction results. Conflating them is the same
+# category error the decision engine made with WARN — "I could not reach the
+# API" says nothing whatsoever about whether the model can read an email, and
+# recording it as though it did corrupts the measurement.
+TRANSIENT_MARKERS = ("429", "rate limit", "network error", "timed out",
+                     "connection", "exhausted retries")
+
+# Sustained limiting needs longer waits than llm_client's per-call retry gives.
+TRANSIENT_BACKOFF = (20, 60, 150)
+
+
+def is_transient(reason: Optional[str]) -> bool:
+    r = (reason or "").lower()
+    return any(m in r for m in TRANSIENT_MARKERS)
+
+
+class RateLimited(RuntimeError):
+    """Raised when the API is refusing sustained traffic; the run should stop."""
+
+
 def extract_cached(rendered, model, run):
-    """Returns (ExtractionResult-as-dict, from_cache)."""
+    """
+    Returns (ExtractionResult-as-dict, from_cache).
+
+    A transient failure is retried with escalating backoff and, if it still
+    fails, raises rather than being written to disk. An earlier version cached
+    whatever came back: a rate-limited run then persisted 201 "extraction
+    failed" records that would never be retried and would have silently poisoned
+    every future scoring pass with a 56% failure rate that was really the
+    network.
+    """
     path = cache_path(rendered.sha256, model, run)
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             return json.load(f), True
+
     res = E.extract(rendered.email, model=model)
+    for wait in TRANSIENT_BACKOFF:
+        if res.ok or not is_transient(res.failure_reason):
+            break
+        print(f"      transient ({(res.failure_reason or '')[:48]}...) "
+              f"— waiting {wait}s")
+        time.sleep(wait)
+        res = E.extract(rendered.email, model=model)
+
+    if not res.ok and is_transient(res.failure_reason):
+        raise RateLimited(res.failure_reason or "transport failure")
+
     payload = res.to_dict()
     payload["_meta"] = {
         "model": model, "prompt_hash": PROMPT_HASH,
@@ -169,22 +211,36 @@ def norm(v):
     return None if v is None else str(v).strip().lower()
 
 
-def score_fields(cases, extractions):
+def score_fields(cases, extractions, rows_by_id=None):
+    """
+    Returns (totals, action confusion, per-scenario totals).
+
+    The per-scenario split matters because a headline average hides whether one
+    whole narrative is being misread — 96% overall reads fine while every
+    ADD_FUND_ACCOUNT case is wrong, and ADD is the distinction the rule table
+    treats as materially lower risk.
+    """
     f = collections.Counter()
     confusion = collections.Counter()
+    by_scen = collections.defaultdict(collections.Counter)
     for c in cases:
         d = extractions[c.case_id]
         exp = c.expected
+        scen = (rows_by_id or {}).get(c.case_id, {}).get("scenario_type", "?")
         f["total"] += 1
+        by_scen[scen]["total"] += 1
         if not d["ok"]:
             f["extraction_failed"] += 1
+            by_scen[scen]["failed"] += 1
             continue
         f["extracted"] += 1
+        by_scen[scen]["extracted"] += 1
         s, cl, p = d["semantic"], d["claims"], d["pressure"]
 
         got = (s["intent"], s["action"], s["scope"])
         want = (exp["intent"], exp["action"], exp["scope"])
         f["semantic_exact"] += got == want
+        by_scen[scen]["semantic_exact"] += got == want
         f["intent_ok"] += s["intent"] == exp["intent"]
         f["action_ok"] += s["action"] == exp["action"]
         f["scope_ok"] += s["scope"] == exp["scope"]
@@ -208,11 +264,22 @@ def score_fields(cases, extractions):
                 f[f"{name}_fp"] += 1
             elif want_b and not got_b:
                 f[f"{name}_fn"] += 1
-    return f, confusion
+    return f, confusion, by_scen
 
 
 def pct(n, d):
     return f"{100*n/d:5.1f}%" if d else "    -"
+
+
+def scenario_report(by_scen):
+    print("  BY SCENARIO — an average can hide one narrative being misread")
+    print(f"    {'scenario':22s} {'n':>5s} {'failed':>7s} {'semantics exact':>17s}")
+    for scen in sorted(by_scen):
+        b = by_scen[scen]
+        ex = b["extracted"]
+        print(f"    {scen:22s} {b['total']:5d} {b['failed']:7d} "
+              f"{b['semantic_exact']:6d}/{ex:<4d} {pct(b['semantic_exact'], ex)}")
+    print()
 
 
 def field_report(f, confusion):
@@ -223,6 +290,9 @@ def field_report(f, confusion):
     print(f"  cases                  {f['total']}")
     print(f"  extraction failed      {f['extraction_failed']}  "
           f"({pct(f['extraction_failed'], f['total'])})")
+    if f["extraction_failed"]:
+        print("    (schema or parse failures only — transport failures are")
+        print("     retried and never recorded as extraction results)")
     print()
     print("  SEMANTICS (the thing the ablation says the model is for)")
     for label, key in (("intent", "intent_ok"), ("action", "action_ok"),
@@ -251,7 +321,8 @@ def field_report(f, confusion):
 
 # ── End-to-end outcomes ───────────────────────────────────────────────
 
-def outcome_report(cases, extractions, rows_by_id, vendors, index):
+def compute_outcomes(cases, extractions, rows_by_id, vendors, index):
+    """Split from printing so a per-run spread can be taken over these too."""
     real = collections.Counter()
     ideal = collections.Counter()
     agree = 0
@@ -272,7 +343,9 @@ def outcome_report(cases, extractions, rows_by_id, vendors, index):
 
         reached = row["callback_reaches_known_contact"] == "True"
         for tag, d, ctr in (("real", d_real, real), ("ideal", d_ideal, ideal)):
-            v = verifier.verify(d, vendor, reached, c.case_id)
+            v = verifier.verify(d, vendor, reached, c.case_id,
+                                controls_existing_account=(
+                                    row.get("controls_existing_account") == "True"))
             final = v.final_outcome if v else d.outcome
             allowed = v.payout_allowed if v else d.payout_allowed
             ctr[final] += 1
@@ -283,17 +356,26 @@ def outcome_report(cases, extractions, rows_by_id, vendors, index):
                 if not allowed and final == BLOCK:
                     ctr["false_block"] += 1
         agree += d_real.rule_fired == d_ideal.rule_fired
+    return real, ideal, agree
 
+
+def rates(c):
+    rec = c["tp"] / (c["tp"] + c["fn"]) if c["tp"] + c["fn"] else 0
+    prec = c["tp"] / (c["tp"] + c["fp"]) if c["tp"] + c["fp"] else 0
+    legit = c["fp"] + c["tn"]
+    return rec, prec, (c["false_block"] / legit if legit else 0)
+
+
+def outcome_report(cases, extractions, rows_by_id, vendors, index):
+    real, ideal, agree = compute_outcomes(cases, extractions, rows_by_id,
+                                          vendors, index)
     n = len(cases)
     print("=" * 78)
     print("END TO END — real extraction vs the rules-only upper bound")
     print("=" * 78)
     print(f"  {'':10s} {'recall':>8s} {'prec':>7s} {'falseBLK':>9s} {'same rule':>10s}")
     for tag, c in (("ideal", ideal), ("real", real)):
-        rec = c["tp"] / (c["tp"] + c["fn"]) if c["tp"] + c["fn"] else 0
-        prec = c["tp"] / (c["tp"] + c["fp"]) if c["tp"] + c["fp"] else 0
-        legit = c["fp"] + c["tn"]
-        fb = c["false_block"] / legit if legit else 0
+        rec, prec, fb = rates(c)
         extra = pct(agree, n) if tag == "real" else "     -"
         print(f"  {tag:10s} {rec:8.1%} {prec:7.1%} {fb:9.1%} {extra:>10s}")
     print()
@@ -345,37 +427,88 @@ def main():
     per_run = []
     for run in range(1, args.runs + 1):
         extractions, fresh = {}, 0
-        for i, c in enumerate(cases, 1):
-            d, cached = extract_cached(c, model, run)
-            extractions[c.case_id] = d
-            if not cached:
-                fresh += 1
-                llm_client.pace()
-            if i % 25 == 0:
-                print(f"    run {run}: {i}/{len(cases)}  ({fresh} new calls)")
-        f, confusion = score_fields(cases, extractions)
-        per_run.append((f, confusion, extractions))
+        try:
+            for i, c in enumerate(cases, 1):
+                d, cached = extract_cached(c, model, run)
+                extractions[c.case_id] = d
+                if not cached:
+                    fresh += 1
+                    llm_client.pace()
+                if i % 25 == 0:
+                    print(f"    run {run}: {i}/{len(cases)}  ({fresh} new calls)")
+        except RateLimited as e:
+            # Everything already extracted is cached and keeps. Scoring what we
+            # have beats scoring nothing, as long as the count is stated.
+            print()
+            print(f"  !! stopped at {len(extractions)}/{len(cases)}: {e}")
+            print(f"  !! {fresh} new this session; the rest were cached.")
+            print("  !! Nothing is lost — re-run later and it resumes.")
+            print()
+            if not extractions:
+                raise SystemExit(1)
+            cases = [c for c in cases if c.case_id in extractions]
+        f, confusion, by_scen = score_fields(cases, extractions, rows_by_id)
+        per_run.append((f, confusion, extractions, by_scen))
         print(f"  run {run} complete — {fresh} new API calls, "
               f"{len(cases)-fresh} from cache")
     print()
 
-    f, confusion, extractions = per_run[-1]
+    f, confusion, extractions, by_scen = per_run[-1]
     field_report(f, confusion)
+    scenario_report(by_scen)
     outcome_report(cases, extractions, rows_by_id, vendors, index)
 
     if args.runs > 1:
         print("=" * 78)
         print("RUN-TO-RUN SPREAD (the extractor is not deterministic)")
         print("=" * 78)
+        print("  Identical inputs, identical temperature. A single pass is one")
+        print("  sample; these are the figures quoted above, re-measured.")
+        print()
+        print(f"  {'field':26s} {'per run':>26s} {'spread':>8s}")
         for label, key in (("semantic exact", "semantic_exact"),
+                           ("intent", "intent_ok"),
+                           ("action", "action_ok"),
+                           ("scope", "scope_ok"),
+                           ("account number", "account_ok"),
+                           ("GSTIN", "gstin_ok"),
+                           ("sender domain", "domain_ok"),
+                           ("urgency true-pos", "urgency_tp"),
+                           ("channel true-pos", "channel_tp"),
                            ("extraction failed", "extraction_failed")):
             vals = [r[0][key] for r in per_run]
-            print(f"  {label:22s} {vals}  spread {max(vals)-min(vals)}")
+            print(f"  {label:26s} {str(vals):>26s} {max(vals)-min(vals):8d}")
         print()
 
-    print(f"  Sample: {len(cases)} of {len(all_cases)} {args.split} cases, "
-          f"{args.runs} run(s), model {model}.")
-    print("  Quote the sample size and run count with any figure above.")
+        print(f"  {'end-to-end':26s} {'per run':>26s} {'spread':>8s}")
+        outs = [compute_outcomes(cases, r[2], rows_by_id, vendors, index)
+                for r in per_run]
+        for i, label in enumerate(("recall", "precision", "false BLOCK")):
+            vals = [round(rates(o[0])[i] * 100, 1) for o in outs]
+            print(f"  {label:26s} {str(vals):>26s} "
+                  f"{max(vals)-min(vals):7.1f}pp")
+        agrees = [o[2] for o in outs]
+        print(f"  {'same rule as ideal':26s} {str(agrees):>26s} "
+              f"{max(agrees)-min(agrees):8d}")
+        print()
+
+    print("=" * 78)
+    print("PROVENANCE — every figure above belongs with these")
+    print("=" * 78)
+    scope = ("the FULL split" if len(cases) == len(all_cases)
+             else f"a stratified sample of {len(all_cases)}")
+    print(f"  cases            {len(cases)}  ({scope}, {args.split})")
+    print(f"  runs             {args.runs}")
+    print(f"  model            {model}")
+    print(f"  prompt hash      {PROMPT_HASH}")
+    print(f"  normaliser       v{NORMALIZER_VERSION}")
+    print(f"  renderer         {R.RENDERER_VERSION}")
+    print(f"  leakage check    {leak:.1%} baseline exact over all "
+          f"{len(all_cases)} rendered messages")
+    print(f"  measured         {time.strftime('%Y-%m-%d')}")
+    print()
+    print("  These are EXTRACTION figures. eval/rules_eval.py measures the rule")
+    print("  table given perfect evidence; this measures what the model recovers.")
     print()
     return 0
 

@@ -79,6 +79,7 @@ def run_case(email_text: str,
              payout_id: str = "pout_TEST",
              fund_account_id: str = "fa_TEST",
              destination_account_number: Optional[str] = None,
+             controls_existing_account: Optional[bool] = None,
              ground_truth: Optional[str] = None) -> Dict[str, Any]:
     """
     Full pipeline for one case. Never raises.
@@ -103,7 +104,8 @@ def run_case(email_text: str,
                  destination_account_number=destination_account_number)
 
     # 3. Verification, only if the decision asked for it
-    ver = verifier.verify(dec, vendor, callback_reaches_known_contact, case_id)
+    ver = verifier.verify(dec, vendor, callback_reaches_known_contact, case_id,
+                          controls_existing_account=controls_existing_account)
 
     final_outcome  = ver.final_outcome if ver else dec.outcome
     payout_allowed = ver.payout_allowed if ver else dec.payout_allowed

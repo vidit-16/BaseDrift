@@ -191,7 +191,9 @@ def evaluate(rows, vendors, index, decide_fn, name):
 
         ver = verifier.verify(dec, vendor,
                               row["callback_reaches_known_contact"] == "True",
-                              row["case_id"])
+                              row["case_id"],
+                              controls_existing_account=(
+                                  row.get("controls_existing_account") == "True"))
         final = ver.final_outcome if ver else dec.outcome
         allowed = ver.payout_allowed if ver else dec.payout_allowed
         caught = not allowed

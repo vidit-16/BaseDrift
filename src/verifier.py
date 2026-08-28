@@ -9,6 +9,12 @@ the callback goes to vendor.known_phone — the number already on file —
 never to any number that appeared in the request. An attacker who
 supplied a phone number in a spoofed email cannot intercept it.
 
+SECOND CHANNEL
+A phone number can be taken. The account we have been paying cannot — moving
+money away from it is the entire point of the attack. So a Reverse Penny Drop
+from the EXISTING account is the authoritative channel, and the callback
+corroborates. See verify() for why "either channel passes" is the wrong rule.
+
 BOUNDED HOLD
 Razorpay auto-rejects any payout left pending beyond ~3 months, so an
 unresolved hold cannot sit forever. We escalate well before that:
@@ -28,9 +34,11 @@ from typing import Optional, List, Dict, Any
 
 from decision_engine import Decision, VendorRecord, ALLOW, STEP_UP, BLOCK
 
-CONFIRMED   = "CONFIRMED"
-REJECTED    = "REJECTED"
-UNREACHABLE = "UNREACHABLE"
+CONFIRMED     = "CONFIRMED"       # channel 1: the vendor answered and confirmed
+CONTROL_PROVEN = "CONTROL_PROVEN"  # channel 2: they still control the old account
+REJECTED      = "REJECTED"
+UNREACHABLE   = "UNREACHABLE"
+CONTESTED     = "CONTESTED"        # channel 1 says yes, channel 2 says no
 
 MAX_CALLBACK_ATTEMPTS = 2
 
@@ -57,13 +65,37 @@ class VerificationResult:
 def verify(decision: Decision,
            vendor: VendorRecord,
            callback_reaches_known_contact: bool,
-           case_id: str = "UNKNOWN") -> Optional[VerificationResult]:
+           case_id: str = "UNKNOWN",
+           controls_existing_account: Optional[bool] = None
+           ) -> Optional[VerificationResult]:
     """
     Only STEP_UP decisions route here. Returns None otherwise.
 
-    callback_reaches_known_contact comes from the scenario ground truth
-    and represents whether the REAL vendor answers — an attacker never
-    controls this number, which is the entire point of the control.
+    TWO CHANNELS, AND THEY ARE NOT EQUAL
+    ====================================
+    channel 1 — call the number in the vendor master. Proves a human on the
+                vendor's known phone says yes.
+    channel 2 — Reverse Penny Drop from the account ALREADY ON FILE. Proves the
+                requester still controls where money has been going.
+
+    "Either one passes" was the obvious design and it is wrong. SIM-swap fraud
+    has channel 1 PASSING — the attacker holds the phone and answers it — so an
+    either/or rule releases exactly the cases the second channel was added for.
+
+    Channel 2 is therefore authoritative and channel 1 corroborating, mirroring
+    the Tier 1 / Tier 2 split in the rule table. The asymmetry is real: taking
+    over a mailbox or porting a number is far easier than gaining access to the
+    victim's bank account, and redirecting money AWAY from that account is the
+    whole point of the attack, so an attacker cannot send from it.
+
+    The honest cost: a vendor who genuinely closed their old account fails
+    channel 2 through no fault of their own, and lands in CONTESTED alongside
+    the attacker. Those two are indistinguishable on evidence, so both are held
+    for a human rather than released. A hold is recoverable; a release is not.
+
+    controls_existing_account=None means channel 2 was not attempted — RPD is
+    enabled on request rather than by default — and channel 1 decides alone, as
+    it did before.
     """
     if decision.outcome != STEP_UP:
         return None
@@ -71,6 +103,56 @@ def verify(decision: Decision,
     vid = f"VER-{case_id}-{uuid.uuid4().hex[:6].upper()}"
     contact = vendor.known_phone
 
+    # ── Channel 2, when it was attempted ──────────────────────────────
+    if controls_existing_account is True:
+        return VerificationResult(
+            verification_id=vid,
+            outcome=CONTROL_PROVEN,
+            final_outcome=ALLOW,
+            contact_used=vendor.known_account_number,
+            contact_source="vendor_master",
+            attempts=1,
+            escalated=False,
+            simulated=True,
+            simulation_basis="controls_existing_account=True — a penny drop from "
+                             "the account already on file completed",
+            reason=f"Reverse Penny Drop from {vendor.known_account_number} (the "
+                   f"account already on file) completed. The requester still "
+                   f"controls where money has been going — which someone who has "
+                   f"only taken the mailbox and the phone cannot do.",
+            payout_allowed=True,
+        )
+
+    if controls_existing_account is False:
+        # Channel 2 failed. Channel 1 cannot overrule it: the case where channel
+        # 1 passes and channel 2 fails is exactly SIM-swap fraud, and it is
+        # indistinguishable from a vendor who closed their old bank account.
+        return VerificationResult(
+            verification_id=vid,
+            outcome=CONTESTED if callback_reaches_known_contact else UNREACHABLE,
+            final_outcome=STEP_UP,
+            contact_used=contact,
+            contact_source="vendor_master",
+            attempts=MAX_CALLBACK_ATTEMPTS,
+            escalated=True,
+            simulated=True,
+            simulation_basis="controls_existing_account=False — no penny drop "
+                             "from the account on file",
+            reason=(
+                f"The callback to {contact} was answered, but no payment could be "
+                f"made from {vendor.known_account_number}, the account already on "
+                f"file. Someone confirming by phone while unable to send from the "
+                f"existing account is what a taken-over number looks like — and is "
+                f"also what a genuinely closed account looks like. Held for a human."
+                if callback_reaches_known_contact else
+                f"Neither channel completed: {MAX_CALLBACK_ATTEMPTS} callbacks to "
+                f"{contact} went unanswered and no payment came from "
+                f"{vendor.known_account_number}. Held and escalated."
+            ),
+            payout_allowed=False,
+        )
+
+    # ── Channel 2 not attempted: channel 1 alone, as before ───────────
     if callback_reaches_known_contact:
         return VerificationResult(
             verification_id=vid,

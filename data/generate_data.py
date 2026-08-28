@@ -21,6 +21,20 @@ legit_rebrand should produce false BLOCKs under the present R4, and
 fraud_sim_swap defeats the callback entirely. If a scenario only ever confirms
 that the rules work, it is not earning its place in the file.
 
+THE SECOND VERIFICATION CHANNEL
+------------------------------
+`controls_existing_account` records whether the requester can still move money
+OUT of the account already on file — what a Reverse Penny Drop pointed at the
+OLD account would establish.
+
+It is deliberately NOT a copy of the label. Attackers never have it: taking over
+a mailbox, or even a phone, does not give you the victim's bank account, and
+redirecting money away from that account is the entire point of the attack. But
+legitimate vendors do not always have it either — a real bank switch may mean
+the old facility is already closed. Those cases exist in the data on purpose,
+because a channel that only ever appears in cases it resolves has not been
+tested against anything.
+
 WITHIN-SCENARIO VARIANCE
 ------------------------
 An earlier version of this generator emitted ONE fixed feature vector per
@@ -32,6 +46,7 @@ fixed narrative core, so the cases within a scenario genuinely differ.
 """
 
 import csv
+import hashlib
 import os
 import random
 
@@ -121,6 +136,21 @@ def _slightly_altered_gstin(gstin):
     return "".join(chars)
 
 
+def _stable_bool(case_id: str, field: str, probability: float) -> bool:
+    """
+    A per-case coin flip that does NOT consume the global RNG stream.
+
+    Adding a random.random() call inside a scenario shifts every subsequent
+    draw, so every later case gets different features, so every rendered email
+    changes, so the entire extraction cache misses — 157 already-measured cases
+    became 3 the first time this field was added the obvious way. Deriving the
+    value from the case id leaves the stream, and therefore every existing
+    measurement, exactly where it was.
+    """
+    h = hashlib.sha256(f"{case_id}:{field}".encode()).hexdigest()
+    return (int(h[:8], 16) % 10_000) / 10_000.0 < probability
+
+
 def _amount_near(base, spread=0.10):
     """An amount that varies around the vendor's baseline rather than equalling it."""
     return round(base * random.uniform(1 - spread, 1 + spread), 2)
@@ -191,6 +221,11 @@ def _base(vendor, case_id, scenario_type, label):
         "near_duplicate_invoice": False,
         "split_below_threshold": False,
         "callback_reaches_known_contact": True,
+        # Can the requester still move money OUT of the account already on
+        # file? Reverse Penny Drop pointed at the OLD account asks exactly
+        # that. It is the one thing a mail-and-phone attacker cannot do —
+        # redirecting away from that account is the whole point of the attack.
+        "controls_existing_account": True,
     }
 
 
@@ -214,6 +249,7 @@ def scenario_fraud_easy(vendor, case_id, ctx):
         "channel_manipulation": random.random() < 0.55,
         "amount": _amount_near(vendor["avg_payout_amount"], 0.20),
         "callback_reaches_known_contact": False,
+        "controls_existing_account": False,
     })
     return c
 
@@ -237,6 +273,7 @@ def scenario_fraud_hard(vendor, case_id, ctx):
         "near_duplicate_invoice": random.random() < 0.70,
         "split_below_threshold": random.random() < 0.70,
         "callback_reaches_known_contact": False,
+        "controls_existing_account": False,
     })
     return c
 
@@ -261,6 +298,7 @@ def scenario_fraud_compromised(vendor, case_id, ctx):
         "channel_manipulation": random.random() < 0.40,
         "amount": _amount_near(vendor["avg_payout_amount"], 0.08),
         "callback_reaches_known_contact": False,
+        "controls_existing_account": False,
     })
     return c
 
@@ -287,6 +325,7 @@ def scenario_fraud_mule(vendor, case_id, ctx):
         "channel_manipulation": random.random() < 0.45,
         "amount": _amount_near(vendor["avg_payout_amount"], 0.15),
         "callback_reaches_known_contact": False,
+        "controls_existing_account": False,
     })
     return c
 
@@ -311,7 +350,10 @@ def scenario_fraud_sim_swap(vendor, case_id, ctx):
         "urgency_language": random.random() < 0.70,
         "channel_manipulation": random.random() < 0.50,
         "amount": _amount_near(vendor["avg_payout_amount"], 0.15),
-        "callback_reaches_known_contact": True,   # the control is defeated
+        "callback_reaches_known_contact": True,   # the callback is defeated
+        # ...but the attacker still cannot send from the vendor's own account.
+        # This is the scenario the second channel exists for.
+        "controls_existing_account": False,
     })
     return c
 
@@ -331,11 +373,18 @@ def scenario_legit_easy(vendor, case_id, ctx):
 def scenario_legit_hard(vendor, case_id, ctx):
     """Vendor genuinely switched banks and is genuinely in a hurry about being
     paid — real urgency, but the account is legitimately theirs and they answer
-    on their known number. The false-positive canary."""
+    on their known number. The false-positive canary.
+
+    A genuine bank switch sometimes means the old account is already closed, so
+    the vendor cannot send from it. That is the honest failure case for the
+    second channel and it must be represented, not assumed away: a control whose
+    dataset only contains cases it handles is not being tested.
+    """
     c = _base(vendor, case_id, "legit_hard", "legit")
     c.update({
         "proposed_account_number": _account_number(),
         "proposed_ifsc": _ifsc(),
+        "controls_existing_account": _stable_bool(case_id, "rpd", 0.75),
         "urgency_language": random.random() < 0.85,
         "hedged_gstin": random.random() < 0.25,
         "amount": _amount_near(vendor["avg_payout_amount"], 0.10),
@@ -356,6 +405,9 @@ def scenario_legit_rebrand(vendor, case_id, ctx):
     c = _base(vendor, case_id, "legit_rebrand", "legit")
     c.update({
         "sender_domain": _rebranded_domain(vendor["known_domain"]),
+        # An acquisition often consolidates banking, so the old facility may
+        # already be gone.
+        "controls_existing_account": _stable_bool(case_id, "rpd", 0.65),
         "proposed_account_number": _account_number(),
         "proposed_ifsc": _ifsc(),
         "urgency_language": random.random() < 0.75,
@@ -404,6 +456,10 @@ def scenario_legit_unreachable(vendor, case_id, ctx):
         "urgency_language": random.random() < 0.40,
         "amount": _amount_near(vendor["avg_payout_amount"], 0.10),
         "callback_reaches_known_contact": False,
+        # Nobody answers the phone, but the vendor still banks where they always
+        # have. This is the scenario the second channel should RESCUE: a genuine
+        # request currently held for want of a phone call.
+        "controls_existing_account": True,
     })
     return c
 

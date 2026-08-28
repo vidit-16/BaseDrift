@@ -51,8 +51,9 @@ import json
 import logging
 import os
 import time
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 from decision_engine import FAVResult, VendorRecord, decide
 from extractor import (
@@ -177,11 +178,29 @@ class FundAccount:
 class Store:
     """Fund accounts, vendors and change-request documents."""
 
-    def __init__(self):
+    def __init__(self, audit_limit: int = 200):
         self.fund_accounts: Dict[str, FundAccount] = {}
         self.vendors: Dict[str, VendorRecord] = {}
         self.documents: Dict[str, Dict[str, Any]] = {}
         self._seen_events: Dict[str, float] = {}
+        # Decisions were computed and then discarded once the response was
+        # written, which left nothing for an operator to review. Bounded and
+        # in-memory, consistent with every other store here; production wants
+        # durable append-only storage, since an audit trail that a restart
+        # erases is not an audit trail.
+        self.audits: Deque[Dict[str, Any]] = deque(maxlen=audit_limit)
+
+    def record_audit(self, audit: Dict[str, Any]) -> None:
+        self.audits.appendleft(audit)
+
+    def recent_audits(self, limit: int = 50):
+        return list(self.audits)[:limit]
+
+    def find_audit(self, payout_id: str) -> Optional[Dict[str, Any]]:
+        for a in self.audits:
+            if a.get("payout_id") == payout_id:
+                return a
+        return None
 
     # -- fund accounts -------------------------------------------------
     def resolve_fund_account(self, fund_account_id: str) -> Optional[FundAccount]:
@@ -379,8 +398,14 @@ def handle_payout_pending(raw_body: bytes,
                  other_vendor_accounts=store.account_index(),
                  destination_account_number=fa.account_number)
 
+    # Neither channel is attempted inline. The callback is a phone call and the
+    # penny drop is a live RazorpayX call that the vendor has to act on — both
+    # take minutes to days, and the webhook has seconds. The payout simply stays
+    # pending until a channel resolves it out of band, which is the safe state
+    # anyway. controls_existing_account=None means channel 2 was not attempted.
     ver = verifier.verify(dec, vendor, callback_reaches_known_contact=False,
-                          case_id=evt.payout_id)
+                          case_id=evt.payout_id,
+                          controls_existing_account=None)
     final = ver.final_outcome if ver else dec.outcome
     actions = verifier.razorpay_actions(
         final, ver.reason if ver else dec.reason,
@@ -409,6 +434,7 @@ def handle_payout_pending(raw_body: bytes,
         "payout_allowed": ver.payout_allowed if ver else dec.payout_allowed,
         "razorpay_actions": actions,
     }
+    store.record_audit(audit)
     return HandlerResult(200, final, dec.reason, audit=audit, actions=actions)
 
 
@@ -420,7 +446,9 @@ def create_app(store: Optional[Store] = None, fav_lookup=None):
     functions above are needed — the tests exercise those without a server.
     """
     from fastapi import FastAPI, Request
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import HTMLResponse, JSONResponse
+
+    import dashboard
 
     app = FastAPI(title="PayeeProof", version="1.0")
     app.state.store = store if store is not None else Store()
@@ -468,6 +496,19 @@ def create_app(store: Optional[Store] = None, fav_lookup=None):
                                 content={"error": "vendor_id and text are required"})
         app.state.store.put_document(doc_id, vendor_id, text)
         return {"document_id": doc_id, "vendor_id": vendor_id}
+
+    # ── Operator dashboard ────────────────────────────────────────────
+    # Deliberately shows what the webhook response does not. See the note at
+    # the top of dashboard.py: different audience, and it needs auth in front
+    # of it wherever this is actually deployed.
+
+    @app.get("/", response_class=HTMLResponse)
+    async def decisions():
+        return dashboard.render_index(app.state.store.recent_audits())
+
+    @app.get("/case/{payout_id}", response_class=HTMLResponse)
+    async def case_detail(payout_id: str):
+        return dashboard.render_case(app.state.store.find_audit(payout_id))
 
     @app.get("/healthz")
     async def healthz():

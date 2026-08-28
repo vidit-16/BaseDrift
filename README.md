@@ -139,8 +139,9 @@ src/pipeline.py         run_case() end to end -> audit dict
 src/webhook.py          payout.pending handler; signature verification,
                         destination resolution, document correlation
 src/webhook_app.py      ASGI entry point for uvicorn
+src/dashboard.py        operator view: decisions, and the evidence behind each
 src/webhook_demo.py     drives the real endpoint over real signed HTTP
-tests/                  128 tests across 5 suites, none needing an API key
+tests/                  150 tests across 6 suites, none needing an API key
                         run them all: python tests/run_all.py
 eval/rules_eval.py      decision-engine scoring vs baselines, no API key needed
 data/render.py          case -> email renderer; leakage guard is a hard failure
@@ -157,9 +158,13 @@ Quick start:
 ```
 pip install -r requirements.txt
 python data/generate_data.py   # vendor master + dev/holdout splits
-python tests/run_all.py                # 128 tests, no API key needed
+python tests/run_all.py                # 150 tests, no API key needed
 python eval/rules_eval.py             # rule scoring vs baselines, no API key
 python src/webhook_demo.py            # signed webhook end to end
+
+set PAYEEPROOF_SEED_DEMO=1            # populate the dashboard on startup
+set RAZORPAY_WEBHOOK_SECRET=whsec_demo
+uvicorn webhook_app:app --app-dir src --port 8000
 python eval/ablation.py        # ablation; baseline half needs no API key
 
 $env:GROQ_API_KEY="gsk_..."    # PowerShell
@@ -266,14 +271,15 @@ What the rules actually buy is measured against that null baseline:
 
 | system | recall | precision | step-up | **false BLOCK** |
 |---|---|---|---|---|
-| null — hold everything, no rules | 85.0% | 87.2% | 100% | 0% |
+| null — hold everything, no rules | 100% | 86.3% | 100% | 0% |
 | block everything | 100% | 43.2% | 0% | 100% |
-| **PayeeProof** | **92.9%** | **87.5%** | **52.7%** | **0.6%** |
+| **PayeeProof** | **100%** | **86.0%** | **52.7%** | **0.6%** |
 
-`fraud_sim_swap` — where the attacker controls the phone as well — defeats the
-callback, so the do-nothing baseline tops out at 85%. PayeeProof reaches 92.9%,
-**catching 19 fraud cases the callback alone cannot**, while rejecting 0.6% of
-legitimate traffic.
+With both verification channels running, no fraud case in the dev split is
+released — by PayeeProof or by the do-nothing baseline, which also catches
+sim-swap once it can run a penny drop. So recall ties, and the rules' measurable
+contribution is operational: **the same capture at half the verification cycles**,
+while rejecting 0.6% of legitimate traffic.
 
 **A rejected legitimate vendor is not the same event as a held one.** A BLOCK
 rejects the payout and deactivates the fund account; a hold costs a phone call.
@@ -394,18 +400,47 @@ Matching is now on the concept, and that same case now correctly warns.
 
 ## Known open flaws
 
-**A compromised callback is unrecoverable from evidence.** When the attacker
-controls the vendor's phone as well as the request — SIM swap, ported number, an
-insider — and the sending domain merely *claims* affiliation
-(`vendor-billing.com`) rather than impersonating it (`vend0r.com`), nothing
-observable separates the request from a genuine rebrand. 17 such cases are
-released on the dev set.
+**A compromised callback was unrecoverable from evidence — so a second channel
+was added.** When the attacker controls the vendor's phone as well as the mail,
+the callback confirms the fraud. 17 cases released on the dev set, and no amount
+of rule tuning could reach them: they are identical to a genuine rebrand on every
+observable signal.
 
-This is a limit, not a tuning problem: the two populations are identical on every
-signal available. The mitigation is a second verification channel — a
-known-device confirmation, a countersignature, a hold window after a recent SIM
-change — not more domain heuristics. Recognising that is precisely why R4 no
-longer tries to close the gap by rejecting anything unusual.
+The fix is not another heuristic. A phone number can be taken; **the account we
+have already been paying cannot** — moving money away from it is the entire point
+of the attack. So the second channel is a **Reverse Penny Drop from the account
+already on file**: send ₹1 from where we have been paying you.
+
+The obvious rule for combining them is wrong. SIM-swap fraud has the callback
+*passing* — the attacker answers the phone — so "either channel confirms" releases
+exactly the cases the channel was added for. The penny drop is therefore
+authoritative and the callback corroborates, mirroring the Tier 1 / Tier 2 split
+in the rule table.
+
+Measured on the dev set:
+
+| | callback only | with the penny drop |
+|---|---|---|
+| `fraud_sim_swap` released | **17** | **0** |
+| `legit_unreachable` held | **30** | **0** |
+| recall | 92.9% | **100%** |
+| false BLOCK | 0.6% | **0.6%** |
+| false hold | 9.5% | 11.7% |
+
+It closes the gap in both directions: no sim-swap case survives it, and thirty
+genuine vendors who simply could not answer a phone are no longer held for one.
+
+**The honest cost.** A vendor who genuinely closed their old account fails the
+penny drop through no fault of their own and lands beside the attacker in a state
+the evidence cannot separate. Both are held for a human rather than released —
+false holds rose 9.5% → 11.7%, and **rejections did not move at all**. That is the
+trade taken deliberately: a hold is recoverable, a release is not.
+
+**And it raises the floor for everyone, including doing nothing.** The null
+baseline also reaches 100% recall now, because holding every payout and running
+both channels catches sim-swap too. So the rules' measurable contribution reverts
+to what it was before: the same capture at **half the verification cycles** —
+52.7% against 100%.
 
 **Extraction is not reproducible run to run.** The semantic layer is called at
 `temperature=0.0`, but repeated calls on the identical hero email return different
@@ -495,6 +530,47 @@ extractor is not reproducible run to run, so a single pass is one sample —
 
 ---
 
+## The operator view
+
+`http://localhost:8000/` lists decisions newest first; each one opens onto the
+evidence behind it. The point is not that the system returns a verdict — it is
+that **every verdict is attributable**. A held payout is somebody's money, and
+the person holding it has to be able to say why:
+
+```
+BLOCK   R2c_followup_destination_conflict
+
+Destination account      999988887777
+Destination came from    razorpay_fund_account      <- not the email
+Change request           none on file
+Evidence source          no_document_supplied
+Semantic reading         PAYMENT_FOLLOWUP / NONE / NONE
+
+TIER 1 — identity, against the vendor master
+FAIL  account_continuity  account 999988887777 is already on file for a
+                          different vendor (VEND0123) — cross-contact reuse
+                          source: vendor_master_crosscheck
+
+POST  /v1/payouts/pout_fa_mule/reject
+PATCH /v1/fund_accounts/fa_mule        [needs human confirmation]
+```
+
+**It deliberately shows what the webhook response withholds.** The reply to
+Razorpay carries no audit record and no reason string, because reason strings
+embed account numbers and that reply crosses the public internet. The dashboard
+has a different audience — an operator inside the merchant — so it shows the
+signal table. That difference is deliberate, and it means this endpoint needs
+authentication in front of it wherever it is actually deployed, exactly as
+`/documents` does.
+
+The store starts **empty** by default, which resolves no fund accounts and
+therefore holds every payout. That is the right default for a control whose safe
+state is inaction: a deployment that has not been given vendor data must not
+begin approving things. `PAYEEPROOF_SEED_DEMO=1` loads the demo fixtures, and
+has to be set deliberately.
+
+---
+
 ## What is real and what is simulated
 
 Stating this plainly because the difference is easy to blur, and a fraud control
@@ -504,7 +580,7 @@ to prevent.
 **Real, and runs:** the decision engine and its rule table; the semantic layer
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency handling; document correlation; the rules evaluation and the
-ablation; 111 tests.
+ablation; the operator dashboard; 150 tests.
 
 **Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
 vendor lookups that would be API reads. FAV results are replayed

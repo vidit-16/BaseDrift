@@ -383,6 +383,103 @@ def test_held_payout_emits_no_api_call():
     assert all(a["method"] is None for a in r.actions)
 
 
+# ══ Operator dashboard ════════════════════════════════════════════════
+# It deliberately shows what the webhook response withholds. These assert both
+# halves of that: the dashboard shows the evidence, and the response still does
+# not.
+
+def _client(store):
+    from fastapi.testclient import TestClient
+    os.environ["RAZORPAY_WEBHOOK_SECRET"] = SECRET
+    return TestClient(webhook.create_app(store))
+
+
+def _fire(client, store, dest, payout_id):
+    raw = json.dumps(event_body(payout_id=payout_id)).encode()
+    handle_payout_pending(raw, sign(raw), store, secret=SECRET)
+
+
+def test_dashboard_is_empty_before_any_events():
+    r = _client(make_store()).get("/")
+    assert r.status_code == 200
+    assert "No payout.pending" in r.text
+
+
+def test_dashboard_lists_a_decision():
+    store = make_store(dest_account=OTHER_ACCT)
+    client = _client(store)
+    _fire(client, store, OTHER_ACCT, "pout_1")
+    body = client.get("/").text
+    assert "pout_1" in body
+    assert "R2c_followup_destination_conflict" in body
+    assert "BLOCK" in body
+
+
+def test_case_view_shows_the_signal_table():
+    """
+    The point of the dashboard: a held payout has to be explainable to the
+    vendor whose money it is.
+    """
+    store = make_store(dest_account=NEW_ACCT)
+    client = _client(store)
+    _fire(client, store, NEW_ACCT, "pout_2")
+    body = client.get("/case/pout_2").text
+    assert "account_continuity" in body
+    assert NEW_ACCT in body
+    assert "razorpay_fund_account" in body
+
+
+def test_unknown_case_does_not_error():
+    assert _client(make_store()).get("/case/pout_nope").status_code == 200
+
+
+def test_dashboard_escapes_vendor_controlled_text():
+    """
+    Vendor names, domains and the model's own output are rendered into HTML.
+    None of it is trusted input.
+    """
+    hostile = VendorRecord(
+        vendor_id="<script>alert(1)</script>", legal_name="x", gstin="g",
+        known_domain="d.com", known_phone="9", known_account_number=KNOWN_ACCT,
+        known_ifsc="I", avg_payout_amount=1.0)
+    store = make_store()
+    store.vendors[hostile.vendor_id] = hostile
+    store.fund_accounts["fa_TEST"] = FundAccount(
+        "fa_TEST", KNOWN_ACCT, "I", "c", hostile.vendor_id)
+    client = _client(store)
+    _fire(client, store, KNOWN_ACCT, "pout_3")
+    body = client.get("/").text
+    assert "<script>alert(1)</script>" not in body
+    assert "&lt;script&gt;" in body
+
+
+def test_recording_a_decision_did_not_loosen_the_response():
+    """
+    Regression. Retaining audits for the dashboard must not put them back into
+    the HTTP reply, where `detail` previously leaked the account number too.
+    """
+    store = make_store()
+    client = _client(store)
+    raw = json.dumps(event_body()).encode()
+    resp = client.post("/webhooks/razorpay", content=raw,
+                       headers={"X-Razorpay-Signature": sign(raw)})
+    dump = json.dumps(resp.json())
+    assert "audit" not in resp.json()
+    assert KNOWN_ACCT not in dump
+    assert VENDOR.legal_name not in dump
+    # ...while the dashboard, a different audience, does show it.
+    assert KNOWN_ACCT in client.get("/").text
+
+
+def test_audit_history_is_bounded():
+    """Unbounded in-memory retention is a slow leak on a long-running process."""
+    store = Store(audit_limit=5)
+    for i in range(12):
+        store.record_audit({"payout_id": f"p{i}"})
+    assert len(store.audits) == 5
+    assert store.audits[0]["payout_id"] == "p11"   # newest first
+
+
 # ══ Runner ════════════════════════════════════════════════════════════
 
 def main():
