@@ -104,6 +104,13 @@ def verify(decision: Decision,
     contact = vendor.known_phone
 
     # ── Channel 2, when it was attempted ──────────────────────────────
+    # KNOWN LIMIT (NOTES.md V2.6): this treats "the account already on file" as
+    # unambiguous, which it is only because every vendor currently has exactly
+    # one. Once a vendor has several, the caller must NAME which account the
+    # penny drop had to come from — and it has to be one the requester could not
+    # have planted: settled-payout history, seasoned, and not added by the same
+    # channel now being verified. Otherwise an attacker who got a second account
+    # onto the master drops from THAT one and this channel confirms their fraud.
     if controls_existing_account is True:
         return VerificationResult(
             verification_id=vid,

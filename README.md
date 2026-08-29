@@ -444,6 +444,34 @@ both channels catches sim-swap too. So the rules' measurable contribution revert
 to what it was before: the same capture at **half the verification cycles** —
 52.7% against 100%.
 
+**The vendor master holds one account per vendor, and real ones do not.**
+`VendorRecord` has an `additional_accounts` field and `all_known_accounts()`
+reads it — but nothing populates it, no CSV column carries it, and all 120
+vendors have exactly one account. It is a coded capability with no data behind
+it, the same shape `account_status` had before it was fixed.
+
+Two things follow, and the first is reproducible today. `build_account_index()`
+maps account to vendor with a plain assignment, so when two vendors share an
+account the second **silently overwrites** the first — and a payout to that
+shared account then fires `R2c_followup_destination_conflict` and is **rejected**.
+`decision_engine.py`'s own comment says sharing an account across contacts is
+legitimate for corporate groups; the code blocks it. Second, a vendor with a
+genuine second account — separate divisions, a collections and a refunds
+account — gets a hold on every payout to it, permanently, because the master
+records only one.
+
+It also makes `legit_add_account` incoherent as a scenario: the request to add
+an account is modelled, the resulting state never is, so ADD versus REPLACE
+cannot be tested end to end even though R4's design rests on the distinction.
+
+The fix is a separate `vendor_accounts` table carrying each account's own
+attributes, a many-to-many index, and an explicit group id so that a shared
+account inside a declared group is distinguishable from the mule pattern. The
+important column is **`verified_by`**: the vendor master is the root of trust
+for every check here, so an account that entered it without verification is
+worthless as an anchor — the destination would be checked against a record an
+attacker could have written. Scoped in NOTES.md as V2.0.
+
 **Extraction is not reproducible run to run.** The semantic layer is called at
 `temperature=0.0`, but repeated calls on the identical hero email return different
 `hedged_fields` values — `['gstin']`, `['proposed_gstin']`, and

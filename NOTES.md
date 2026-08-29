@@ -215,6 +215,132 @@ The v1 holdout is spent. Everything below changes rules, so it needs a FRESH
 holdout from a new seed — and that holdout should also carry the inbox threat
 scenarios, otherwise it resamples the same distribution and tests nothing new.
 
+V2.0  THE VENDOR MASTER IS ONE-ACCOUNT-PER-VENDOR, AND THAT IS WRONG.
+      Promote this above the rest: it is the root of trust for every check in
+      the system, and it currently has a reproducible false-BLOCK path.
+
+      What exists today:
+        VendorRecord.additional_accounts   exists, all_known_accounts() uses it
+        load_vendors() populates it        NO — there is no CSV column
+        generator emits second accounts    NO — zero mentions
+        test or eval coverage              ZERO
+        accounts per vendor in the master  1, for all 120
+
+      Same shape as account_status before P0.2: coded, never populated, never
+      exercised. It looks like a feature and is dead code.
+
+      THREE CONSEQUENCES, worst first.
+
+      (a) A CORPORATE GROUP SHARING AN ACCOUNT IS BLOCKED. Reproduced:
+          build_account_index() does `idx[acct] = v.vendor_id` in a loop, so
+          the second vendor SILENTLY OVERWRITES the first. A payout to that
+          shared account, for whichever vendor lost the race, then fires
+          R2c_followup_destination_conflict -> BLOCK.
+
+          decision_engine's own comment says sharing an account across contacts
+          is "legitimate for corporate groups". The code rejects it. This is the
+          false-positive path recorded under V2.1 as "untested, not absent" —
+          it is present and reproducible.
+
+      (b) EVERY PAYOUT TO A LEGITIMATE SECOND ACCOUNT HOLDS, FOREVER. A vendor
+          with a collections account and a refunds account, or separate
+          divisions, gets account_continuity WARN on every payout to the second
+          one, because the master records only one. A permanent false-hold
+          generator in production.
+
+      (c) legit_add_account IS INCOHERENT. The narrative has the vendor opening
+          a second facility while the existing one keeps serving another
+          division — but the master never gains that account. The REQUEST is
+          modelled and the RESULTING STATE is not, so a later payout to the
+          added account stays "new" indefinitely. It also means ADD versus
+          REPLACE is untestable end to end, which is the distinction R4's design
+          leans on.
+
+      THE FIX.
+        - A separate table, not a wider column. Accounts have their own
+          attributes: vendor_accounts.csv with
+          (vendor_id, account_number, ifsc, status, added_on, verified_by).
+        - Many-to-many index: account -> set(vendor_ids), never a dict that
+          overwrites. Cross-contact reuse then means "belongs to a vendor that
+          is not this one AND not in the same declared group".
+        - An explicit group_id on the vendor. A shared account inside a declared
+          group is legitimate; the same account across unrelated vendors is the
+          mule pattern. Without the group concept those two are
+          indistinguishable, which is precisely why it blocks today.
+        - Generator: vendors with 1, 2 and 3 accounts; some groups genuinely
+          sharing; and legit_add_account updating the master so a follow-up
+          payout to the added account passes.
+
+      AND THE PART THAT MATTERS MOST: verified_by is not a nice-to-have column.
+      The vendor master is the root of trust for every check here. An account
+      that got in without verification is worthless as a trust anchor — the
+      destination would be checked against a record an attacker could have
+      written. README already names this recursively ("the vendor master's own
+      update path needs equivalent protection"), and multi-account makes it
+      concrete, because accounts now get ADDED routinely rather than set once at
+      onboarding. Every account needs provenance: verified at onboarding, by a
+      penny drop, by a callback — and when.
+
+      This is arguably a bigger item than triage. It is the difference between
+      "we check against a trusted record" and "we check against a record".
+
+V2.6  WHICH ACCOUNT DOES THE PENNY DROP COME FROM?
+      Falls out of V2.0 and is a REDESIGN of verifier.py, not an edit. It was
+      invisible while every vendor had exactly one account.
+
+      THE PREMISE CHANNEL 2 RESTS ON: the requester still controls where money
+      has been going, and an attacker cannot, because moving money AWAY from
+      that account is the entire point of the attack.
+
+      With one account on file, "the account we have been paying" is
+      unambiguous. With several it is not, and the premise breaks silently.
+
+      THE ATTACK. An attacker gets account B added to the vendor master — a
+      compromised mailbox, a plausible "we have opened a second facility"
+      request, which is exactly the legit_add_account narrative. Later they
+      request a change to account C. The system asks for proof of control over
+      an account on file; the attacker penny-drops from B, which they control;
+      channel 2 passes. The strongest control in the system confirms the fraud.
+
+      What happened there: the attacker used a PREVIOUS SUCCESS as the
+      credential for the next one.
+
+      THE FIX, in one sentence: the system NAMES the account, the requester
+      never chooses. "Send Rs 1 from any account on file" lets the attacker
+      pick the one they control. "Send Rs 1 from 434392416664" does not.
+
+      WHICH ACCOUNT QUALIFIES — one the requester could not have planted:
+        - has received AT LEAST ONE SETTLED PAYOUT. Money actually arrived, so
+          the vendor controlled it at that moment. Being listed proves nothing.
+        - added at least SEASONING_DAYS ago. An account added last week is
+          exactly what a planted one looks like.
+        - NOT added by the channel now being verified. An account added by an
+          email request cannot verify another email request; that is circular.
+      Choose the OLDEST qualifying account, not the newest.
+
+      WHEN NOTHING QUALIFIES — the part that needs care. Today:
+        controls_existing_account=None   -> channel 1 decides alone
+                                 =False  -> held
+      The instinct is to return None ("not attempted"). THAT IS WRONG: it falls
+      back to the callback, which sim-swap defeats, so a vendor with no seasoned
+      account and a compromised phone would be RELEASED. There must be a third
+      state — channel 2 UNAVAILABLE — which escalates to a human and never falls
+      back. Same "inconclusive is not clean" rule as everywhere else.
+
+      It happens legitimately for a genuinely new vendor with no payout history,
+      and holding is correct there: nothing exists to compare against.
+
+      THE HONEST LIMIT. A patient attacker plants an account, waits out the
+      seasoning window, lets it receive one real payout, then uses it. That
+      defeats this. But it requires that they ALREADY SUCCEEDED ONCE, so this is
+      containment rather than prevention: it stops one compromise bootstrapping
+      the next, which is the realistic threat. Do not claim the channel is
+      airtight.
+
+      DATA CONSEQUENCE, bigger than V2.0 currently describes: the vendor master
+      alone cannot answer "has this account received a settled payout". This
+      needs SETTLEMENT HISTORY, not just an account list.
+
 V2.1  STOP REJECTING AUTOMATICALLY.  Measured on dev, 556 cases:
 
         policy                              recall  falseBLK  rejects  holds
@@ -291,10 +417,61 @@ V2.3  MCP INBOX — a tool layer, not a stage. It appears twice:
       It does NOT rescue the compromised-mailbox case — the history there is
       genuine.
 
+V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES
+
+      block                       2.1  2.5  2.0  2.6  2.2  2.3
+      1  Entry (webhook)           -    -    -    -   rew  rew
+      2  Evidence (extractor)      -    -    -    -    -    -     <- UNTOUCHED
+      3  Trust store              --   --  RBLD  +hist  -    -
+      4  Signals                   -   sml  chg   -    -   ext
+      5  Rules                    sml   -    -    -    -    -
+      6  Verification              -    -    -   RDSGN -    -
+      7  Actions                  sml   -    -    -    -    -
+      8  Observability             -    -   min  min   -   min
+      9a vendor_master.csv         -    -   schema +hist -   -
+      9b cases_dev.csv             -    -   REGEN REGEN fields fields
+      9c cases_holdout.csv         -    -   REGEN REGEN fields fields
+      9d extraction cache          -    -   VOID  VOID   -    -
+      9e evaluators                -    -   chg   chg  new  new
+      NEW triage                   -    -    -    -   BUILD  -
+      NEW investigation agent      -    -    -    -    -   BUILD
+
+      Block 2, the extractor and the model client, is touched by NOTHING in v2.
+      It is the piece people assume is riskiest and it is the most stable thing
+      here — 100% on intent and scope across dev AND holdout, with errors that
+      provably do not move decisions.
+
+      Row 9d is the schedule risk. ANY generator change invalidates every cached
+      extraction: 2.1 h to re-extract 800 cases on a clean run, ~9.6 h
+      rate-limited, and roughly 7 DAYS against the free tier's ~200k tokens/day.
+      Therefore: ONE generator pass. Multi-account, groups, settlement history,
+      new scenarios and the new seed all land together, or that cost is paid
+      several times over.
+
+      Rows 9b and 9c move together and are not optional. Dev and holdout come
+      out of a single generate_cases(800) call split 70/30, so they cannot be
+      changed independently; they must share a schema, because the evaluators
+      read both with the same code; and they must share a DISTRIBUTION, because
+      dev's whole job is to be a proxy for unseen data. Scenarios present only
+      in holdout would make its result uninterpretable — a genuine
+      generalisation gap would be indistinguishable from a distribution mismatch
+      we created ourselves.
+
 V2.4  FRESH HOLDOUT. New seed, and add the scenarios v1 lacks: corporate
-      groups legitimately sharing an account (see V2.1), first-contact fraud,
-      and thread hijacking. Without new scenarios a new seed only resamples
-      the same distribution.
+      groups legitimately sharing an account (see V2.0(a) — this one is
+      reproducible today), vendors with two or three legitimate accounts,
+      a payout to an account added by an earlier accepted request, first-contact
+      fraud, and thread hijacking. Without new scenarios a new seed only
+      resamples the same distribution.
+
+      AND SAY THIS PLAINLY RATHER THAN CLAIMING A VIRGIN TEST SET: v1's holdout
+      has been seen, and what it showed shaped v2's design — the inactive fix
+      and the no-reject decision both came from reading it. That cannot be
+      un-seen. What a new seed plus new scenarios buys is that the parts of v2
+      which matter most — multi-account, corporate groups, the verification
+      account, triage — are tested on ground nothing has ever been tuned
+      against. That is a smaller claim than "fresh holdout" implies and it is
+      the true one.
 
 V2.5  Also carry over from the v1 holdout finding: account_status=inactive
       should be INCONCLUSIVE, not FAIL. It caused ALL FIVE false blocks across
