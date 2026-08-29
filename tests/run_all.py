@@ -16,6 +16,7 @@ SUITES = [
     "test_extractor.py",
     "test_verifier_pipeline.py",
     "test_webhook.py",
+    "test_triage_inbox.py",
 ]
 
 
