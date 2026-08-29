@@ -324,6 +324,205 @@ def test_extract_survives_an_exception_anywhere_in_conversion():
 
 # ── Runner ───────────────────────────────────────────────────────────
 
+# ══ The provider boundary (V2.7) ══════════════════════════════════════
+# COMPLIANCE.md rests an argument on this: the pinned model is open-weight and
+# llm_client is the only module that talks to a provider, so moving inference
+# in-country is a one-file change. These tests make that claim testable instead
+# of asserted.
+
+def _env(**kw):
+    """Set env vars for one test and restore afterwards."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def ctx():
+        old = {k: os.environ.get(k) for k in kw}
+        try:
+            for k, v in kw.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            yield
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+    return ctx()
+
+
+def test_the_provider_is_one_environment_variable():
+    import llm_client as L
+    with _env(PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1"):
+        assert L.chat_url() == "https://openrouter.ai/api/v1/chat/completions"
+        assert L.models_url() == "https://openrouter.ai/api/v1/models"
+    with _env(PAYEEPROOF_BASE_URL=None):
+        assert "groq" in L.chat_url()
+
+
+def test_a_trailing_slash_does_not_produce_a_double_slash():
+    """The obvious way to get a 404 on a base URL someone pasted from docs."""
+    import llm_client as L
+    with _env(PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1/"):
+        assert L.chat_url() == "https://openrouter.ai/api/v1/chat/completions"
+
+
+def test_an_existing_groq_key_keeps_working():
+    """
+    Switching provider has to be ADDITIVE. If PAYEEPROOF_API_KEY were required,
+    every existing setup would break on upgrade for no reason.
+    """
+    import llm_client as L
+    with _env(PAYEEPROOF_API_KEY=None, GROQ_API_KEY="gsk_existing"):
+        assert L.get_api_key() == "gsk_existing"
+    with _env(PAYEEPROOF_API_KEY="sk-or-new", GROQ_API_KEY="gsk_existing"):
+        assert L.get_api_key() == "sk-or-new"
+
+
+def test_the_call_gap_is_configurable_and_survives_nonsense():
+    """
+    7 seconds is a Groq free-tier figure and costs 93 minutes over an 800-case
+    run anywhere else. A bad value must fall back rather than crash a run that
+    has been going for hours.
+    """
+    import llm_client as L
+    with _env(PAYEEPROOF_CALL_GAP="0.1"):
+        assert L.call_gap() == 0.1
+    with _env(PAYEEPROOF_CALL_GAP="not-a-number"):
+        assert L.call_gap() == L.DEFAULT_CALL_GAP
+    with _env(PAYEEPROOF_CALL_GAP=None):
+        assert L.call_gap() == L.DEFAULT_CALL_GAP
+
+
+def test_both_spellings_of_the_open_weight_model_are_recognised():
+    """
+    Same weights, different id: Groq and OpenRouter publish it as
+    openai/gpt-oss-120b, Cerebras drops the prefix. Missing the second spelling
+    would silently fall through to a DIFFERENT model on Cerebras.
+    """
+    import llm_client as L
+    assert "openai/gpt-oss-120b" in L.MODEL_PREFERENCE
+    assert "gpt-oss-120b" in L.MODEL_PREFERENCE
+    assert (L.MODEL_PREFERENCE.index("openai/gpt-oss-120b")
+            < L.MODEL_PREFERENCE.index("qwen/qwen3.6-27b"))
+
+
+def test_a_pinned_model_skips_detection_entirely():
+    """Detection costs a round trip and can pick a different model than intended."""
+    import llm_client as L
+    L._cached_model = None
+    with _env(PAYEEPROOF_MODEL="gpt-oss-120b"):
+        model, err = L.detect_model(force=True)
+        assert err is None and model == "gpt-oss-120b"
+    L._cached_model = None
+
+
+def test_max_tokens_is_not_lowered_without_measurement():
+    """
+    MEASURED: gpt-oss-120b spends 483 reasoning tokens before the first JSON
+    character and 644 in total. max_tokens=700 returns HTTP 400 — the response
+    truncates mid-object and fails to parse, which reads downstream as an
+    extraction failure rather than a config error. This pins the floor.
+    """
+    import llm_client as L
+    assert L.DEFAULT_MAX_TOKENS >= 1400
+
+
+def test_the_audit_gets_the_provider_not_just_the_model():
+    """
+    OpenRouter routes one model id across ~18 hosts, so "gpt-oss-120b decided
+    this" does not identify what actually ran. A payment decision has to trace
+    to a named host.
+    """
+    import llm_client as L
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"provider": "CoreWeave",
+                    "choices": [{"message": {"content": '{"ok": true}'},
+                                 "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 917, "completion_tokens": 644,
+                              "total_tokens": 1561}}
+
+    import requests
+    real = requests.post
+    requests.post = lambda *a, **k: FakeResponse()
+    meta = {}
+    try:
+        with _env(PAYEEPROOF_API_KEY="k",
+                  PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1"):
+            text, err = L.call("sys", "user", model="openai/gpt-oss-120b", meta=meta)
+    finally:
+        requests.post = real
+    assert err is None, err
+    assert meta["model"] == "openai/gpt-oss-120b"
+    assert meta["served_by"] == "CoreWeave"
+    assert meta["usage"]["total_tokens"] == 1561
+
+
+def test_pinning_a_provider_forbids_silent_fallback():
+    """
+    Pinning that quietly falls back to another host is worse than not pinning:
+    the audit record would name one company while another served the call.
+    """
+    import llm_client as L
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "{}"},
+                                 "finish_reason": "stop"}]}
+
+    import requests, json as _json
+    real = requests.post
+
+    def spy(url, headers=None, data=None, timeout=None):
+        captured.update(_json.loads(data))
+        return FakeResponse()
+
+    requests.post = spy
+    try:
+        with _env(PAYEEPROOF_API_KEY="k", PAYEEPROOF_PROVIDER="CoreWeave"):
+            L.call("sys", "user", model="openai/gpt-oss-120b")
+    finally:
+        requests.post = real
+    assert captured["provider"] == {"only": ["CoreWeave"], "allow_fallbacks": False}
+
+
+def test_no_provider_pin_sends_no_provider_field():
+    """Specificity: providers that do not understand the field must not see it."""
+    import llm_client as L
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "{}"},
+                                 "finish_reason": "stop"}]}
+
+    import requests, json as _json
+    real = requests.post
+
+    def spy(url, headers=None, data=None, timeout=None):
+        captured.update(_json.loads(data))
+        return FakeResponse()
+
+    requests.post = spy
+    try:
+        with _env(PAYEEPROOF_API_KEY="k", PAYEEPROOF_PROVIDER=None):
+            L.call("sys", "user", model="openai/gpt-oss-120b")
+    finally:
+        requests.post = real
+    assert "provider" not in captured
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]

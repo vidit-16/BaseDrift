@@ -5,10 +5,41 @@ Single place that talks to the LLM provider. Everything else imports
 from here, so a model deprecation is a one-line fix in MODEL_PREFERENCE
 rather than a hunt across the codebase.
 
-Provider: Groq (free tier, no credit card).
-  Get a key at console.groq.com, then:
-    PowerShell:  $env:GROQ_API_KEY="gsk_..."
-    cmd:         set GROQ_API_KEY=gsk_...
+THE PROVIDER IS CONFIGURATION, NOT CODE
+=======================================
+COMPLIANCE.md rests an argument on this file: the pinned model is OPEN-WEIGHT,
+and this is the only module that talks to a provider, so bringing inference
+inside India for RBI payment-data localisation is a one-file change. That claim
+was true but untested. It is now one ENVIRONMENT VARIABLE, and exercised:
+
+  PAYEEPROOF_BASE_URL   provider root, OpenAI-compatible   (default: Groq)
+  PAYEEPROOF_API_KEY    key for that provider              (falls back to
+                                                            GROQ_API_KEY)
+  PAYEEPROOF_MODEL      pin a model id, skipping detection
+  PAYEEPROOF_PROVIDER   OpenRouter only: pin WHICH host serves the model
+  PAYEEPROOF_CALL_GAP   seconds between calls (default 7.0, a Groq free-tier
+                        figure that costs 90 minutes anywhere else)
+
+The model does not change when the provider does. gpt-oss-120b is open-weight,
+so a dozen companies run the same weights; moving between them keeps both the
+localisation argument and comparability with v1's measurements, which a switch
+to a closed hosted model would forfeit.
+
+  Groq        https://api.groq.com/openai/v1     openai/gpt-oss-120b
+  OpenRouter  https://openrouter.ai/api/v1       openai/gpt-oss-120b
+  Cerebras    https://api.cerebras.ai/v1         gpt-oss-120b
+
+    PowerShell:  $env:PAYEEPROOF_API_KEY="sk-or-..."
+                 $env:PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1"
+
+WHY THE SERVING PROVIDER GOES IN THE AUDIT RECORD
+=================================================
+OpenRouter routes one model id across ~18 hosts, so consecutive calls can be
+served by different companies. For most projects that is a feature. Here the
+whole point of the audit trail is that a payment decision traces to exactly what
+produced it, and "some host in a pool" is a weaker record than a named one. So
+the provider is pinned when PAYEEPROOF_PROVIDER is set, and whichever host
+actually served the call is reported back through `meta` alongside the model.
 
 Handles, because all three actually bit us during development:
   - model deprecation      -> auto-detects a live model from /models
@@ -31,29 +62,69 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────
 
-CHAT_URL   = "https://api.groq.com/openai/v1/chat/completions"
-MODELS_URL = "https://api.groq.com/openai/v1/models"
+DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 
-# Tried in order; first one live on the account wins.
+
+def base_url():
+    return os.environ.get("PAYEEPROOF_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
+
+
+def chat_url():
+    return f"{base_url()}/chat/completions"
+
+
+def models_url():
+    return f"{base_url()}/models"
+
+
+def provider_name():
+    """A readable host name for the audit record, derived from the base URL."""
+    host = base_url().split("//")[-1].split("/")[0]
+    return host.replace("api.", "").replace(".com", "").replace(".ai", "")
+
+
+# Tried in order; first one live on the account wins. Both spellings of the
+# same open-weight model are listed: Groq and OpenRouter publish it as
+# openai/gpt-oss-120b, Cerebras drops the prefix. Same weights either way.
 # llama-3.3-70b-versatile was shut down 2026-08-16 — do not re-add it.
 MODEL_PREFERENCE = [
     "openai/gpt-oss-120b",
+    "gpt-oss-120b",
     "qwen/qwen3.6-27b",
     "openai/gpt-oss-20b",
     "moonshotai/kimi-k2-instruct-0905",
 ]
 
-# Free tier is ~8000 tokens/min. Calls run ~900 tokens, so ~9/min.
-SECONDS_BETWEEN_CALLS = 7.0
+# 7.0 is a GROQ FREE TIER figure — 8000 tokens/min against ~900-token calls.
+# It is wrong everywhere else and costs 93 minutes over an 800-case run for
+# nothing, so it is configurable rather than a constant someone has to find.
+DEFAULT_CALL_GAP = 7.0
 
-# Reasoning models spend tokens thinking before emitting JSON.
+# Reasoning models spend tokens thinking before emitting JSON. MEASURED on
+# gpt-oss-120b: 483 reasoning tokens before the first JSON character, 644
+# completion tokens in total. 700 returns HTTP 400 — the response truncates
+# mid-object and fails to parse. Do not lower this without measuring again.
 DEFAULT_MAX_TOKENS = 2000
 
 _cached_model = None
 
 
 def get_api_key():
-    return os.environ.get("GROQ_API_KEY", "").strip()
+    """
+    PAYEEPROOF_API_KEY first, GROQ_API_KEY second.
+
+    The fallback is deliberate: an existing Groq setup keeps working untouched,
+    so switching provider is additive rather than a migration.
+    """
+    return (os.environ.get("PAYEEPROOF_API_KEY", "").strip()
+            or os.environ.get("GROQ_API_KEY", "").strip())
+
+
+def call_gap():
+    try:
+        return float(os.environ.get("PAYEEPROOF_CALL_GAP", DEFAULT_CALL_GAP))
+    except ValueError:
+        return DEFAULT_CALL_GAP
 
 
 def detect_model(api_key=None, force=False):
@@ -64,12 +135,17 @@ def detect_model(api_key=None, force=False):
     if _cached_model and not force:
         return _cached_model, None
 
+    pinned = os.environ.get("PAYEEPROOF_MODEL", "").strip()
+    if pinned:
+        _cached_model = pinned
+        return pinned, None
+
     api_key = api_key or get_api_key()
     if not api_key:
-        return None, "GROQ_API_KEY is not set"
+        return None, "no API key: set PAYEEPROOF_API_KEY (or GROQ_API_KEY)"
 
     try:
-        r = requests.get(MODELS_URL,
+        r = requests.get(models_url(),
                          headers={"Authorization": f"Bearer {api_key}"},
                          timeout=20)
         body = r.json()
@@ -111,7 +187,7 @@ def call(system_prompt, user_content, max_tokens=DEFAULT_MAX_TOKENS,
     """
     api_key = api_key or get_api_key()
     if not api_key:
-        return None, "GROQ_API_KEY is not set"
+        return None, "no API key: set PAYEEPROOF_API_KEY (or GROQ_API_KEY)"
 
     if model is None:
         model, err = detect_model(api_key)
@@ -119,6 +195,7 @@ def call(system_prompt, user_content, max_tokens=DEFAULT_MAX_TOKENS,
             return None, err
     if meta is not None:
         meta["model"] = model
+        meta["provider"] = provider_name()
 
     payload = {
         "model": model,
@@ -129,6 +206,14 @@ def call(system_prompt, user_content, max_tokens=DEFAULT_MAX_TOKENS,
             {"role": "user",   "content": user_content},
         ],
     }
+
+    # OpenRouter routes one model id across many hosts, so consecutive calls
+    # can be served by different companies. Pinning makes the audit record name
+    # one. Ignored by providers that do not understand the field.
+    pinned_provider = os.environ.get("PAYEEPROOF_PROVIDER", "").strip()
+    if pinned_provider:
+        payload["provider"] = {"only": [pinned_provider],
+                               "allow_fallbacks": False}
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -136,7 +221,7 @@ def call(system_prompt, user_content, max_tokens=DEFAULT_MAX_TOKENS,
 
     for attempt in range(max_retries + 1):
         try:
-            r = requests.post(CHAT_URL, headers=headers,
+            r = requests.post(chat_url(), headers=headers,
                               data=json.dumps(payload), timeout=45)
         except requests.Timeout:
             return None, "request timed out"
@@ -171,6 +256,17 @@ def call(system_prompt, user_content, max_tokens=DEFAULT_MAX_TOKENS,
         msg_obj = choice["message"]
     except (KeyError, IndexError):
         return None, f"unexpected response shape: {str(body)[:300]}"
+
+    # Which host actually served this. OpenRouter reports it; others do not,
+    # in which case the base URL is the honest answer. It belongs in the audit
+    # record for the same reason the model id does.
+    if meta is not None:
+        meta["served_by"] = body.get("provider") or provider_name()
+        usage = body.get("usage") or {}
+        if usage:
+            meta["usage"] = {k: usage[k] for k in
+                             ("prompt_tokens", "completion_tokens", "total_tokens")
+                             if k in usage}
 
     text = (msg_obj.get("content") or "").strip()
     if not text:
@@ -208,5 +304,13 @@ def call_json(system_prompt, user_content, **kwargs):
 
 
 def pace():
-    """Sleep between calls to stay under the free-tier rate limit."""
-    time.sleep(SECONDS_BETWEEN_CALLS)
+    """
+    Sleep between calls to stay under the provider's rate limit.
+
+    The default of 7s is Groq's free tier and nothing else. On a provider with
+    no per-minute ceiling, set PAYEEPROOF_CALL_GAP=0.1 — over an 800-case run
+    the default alone costs 93 minutes.
+    """
+    gap = call_gap()
+    if gap > 0:
+        time.sleep(gap)

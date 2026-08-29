@@ -251,6 +251,11 @@ class ExtractionResult:
     # audit cannot say which model read the document — and "an AI decided" is
     # not an auditable statement. See COMPLIANCE.md.
     model_used:  Optional[str] = None
+    # WHICH HOST ran the model. gpt-oss-120b is open-weight, so the same model
+    # id is served by a dozen companies and OpenRouter routes across ~18 of
+    # them — meaning "gpt-oss-120b decided this" does not identify what actually
+    # ran. A payment decision has to trace to a named host, not a pool.
+    served_by:   Optional[str] = None
     prompt_hash: Optional[str] = None
 
     def to_dict(self):
@@ -261,6 +266,7 @@ class ExtractionResult:
             "document_truncated": self.document_truncated,
             "hidden_chars_removed": self.hidden_chars_removed,
             "model_used": self.model_used,
+            "served_by": self.served_by,
             "prompt_hash": self.prompt_hash,
             "semantic": {
                 "intent": self.intent,
@@ -418,6 +424,7 @@ def extract(raw_document: str, model=None) -> ExtractionResult:
         # is the difference between an outage and a bad deployment.
         return ExtractionResult(ok=False, failure_reason=err,
                                 model_used=meta.get("model"),
+                                served_by=meta.get("served_by"),
                                 prompt_hash=PROMPT_HASH)
 
     # Everything from here to the return is wrapped. The caller's only
@@ -431,15 +438,18 @@ def extract(raw_document: str, model=None) -> ExtractionResult:
                 ok=False,
                 failure_reason=f"schema validation failed: {schema_err}",
                 raw_llm_output=_safe_dump(parsed),
-                model_used=meta.get("model"), prompt_hash=PROMPT_HASH,
+                model_used=meta.get("model"), served_by=meta.get("served_by"),
+                prompt_hash=PROMPT_HASH,
             )
-        return _build_result(parsed, doc, meta.get("model"))
+        return _build_result(parsed, doc, meta.get("model"),
+                             meta.get("served_by"))
     except Exception as e:  # noqa: BLE001
         return ExtractionResult(
             ok=False,
             failure_reason=f"malformed provider output ({type(e).__name__}: {e})",
             raw_llm_output=_safe_dump(parsed),
-            model_used=meta.get("model"), prompt_hash=PROMPT_HASH,
+            model_used=meta.get("model"), served_by=meta.get("served_by"),
+            prompt_hash=PROMPT_HASH,
         )
 
 
@@ -450,7 +460,8 @@ def _safe_dump(parsed) -> str:
         return repr(parsed)[:500]
 
 
-def _build_result(parsed: dict, doc, model_used=None) -> ExtractionResult:
+def _build_result(parsed: dict, doc, model_used=None,
+                  served_by=None) -> ExtractionResult:
 
     gstin = _s(parsed["proposed_gstin"])
     domain = _s(parsed["sender_domain"])
@@ -461,6 +472,7 @@ def _build_result(parsed: dict, doc, model_used=None) -> ExtractionResult:
         ok=True,
         raw_llm_output=json.dumps(parsed)[:1000],
         model_used=model_used,
+        served_by=served_by,
         prompt_hash=PROMPT_HASH,
         document_truncated=doc.truncated,
         hidden_chars_removed=doc.hidden_chars_removed,
@@ -507,7 +519,7 @@ thread rather than the old one.
 Priya Nair, Suraksha Systems
 """.strip()
 
-    print("Testing extractor (needs GROQ_API_KEY)...\n")
+    print("Testing extractor (needs PAYEEPROOF_API_KEY or GROQ_API_KEY)...\n")
     r = extract(TEST)
     print(f"ok: {r.ok}")
     if not r.ok:
