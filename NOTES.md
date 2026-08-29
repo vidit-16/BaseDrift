@@ -481,16 +481,15 @@ V2.R  WHAT PHASES 3 AND 4 ACTUALLY PRODUCED  (measured, dev split, 551 cases)
 
       ── The corpus ──────────────────────────────────────────────────
       seed 20260829, AS_OF 2026-06-30, 120 vendors with UNIQUE domains, 272
-      accounts on file, 800 cases split 551 / 249. 46 vendors in a declared
-      group, 14 groups genuinely sharing a facility. 800 rendered messages, 800
-      distinct, ZERO leakage failures, byte-identical across two full runs.
+      accounts on file, 800 cases split 552 / 248. Accounts per vendor
+      {1:34, 2:39, 3:33, 4:10, 5:3, 6:1}. 46 vendors across 20 declared groups,
+      14 of those groups genuinely sharing a facility, and NO account shared
+      across two different groups. 800 rendered messages, 800 distinct, ZERO
+      leakage failures, byte-identical across two full runs.
 
-      (Vendor domains were not unique at first — legal names come from a small
-      pool and _domain() collided for 57 of 120. A domain shared by two
-      unrelated vendors makes the sender an ambiguous identifier and quietly
-      turns triage's vendor resolution into a coin flip. Found by evaluating
-      triage, fixed in the generator, corpus regenerated. Every figure below is
-      from the final corpus.)
+      THIS CORPUS IS THE SECOND ONE. See V2.B below — the first was generated
+      wrong throughout, and its numbers, including a scored holdout, belong to
+      a dataset that no longer exists.
 
       ── The three v1 defects, closed and measured ───────────────────
 
@@ -726,6 +725,58 @@ V2.7  THE PROVIDER IS CONFIGURATION, NOT CODE  (DONE, Phase 6 prep)
       URL does not produce a double slash, that a malformed CALL_GAP falls back
       rather than crashing a run that has been going for hours, and that no
       provider field is sent when none is pinned.
+
+V2.B  THE CORPUS WAS GENERATED WRONG, AND EVERY TEST PASSED
+
+      Found while verifying a figure for the README, not by anything in the
+      suite: the file said 213 accounts where the documentation said 272.
+
+      THE DEFECT. The domain de-duplication loop, added late to stop 57 of 120
+      vendors sharing a domain, used `n` as its collision counter:
+
+          n = 2
+          while cand in taken:
+              cand = base.replace(".com", f"{n}.com")
+              n += 1
+          ...
+          for g in range(max(1, n // 6)):     # n is the VENDOR COUNT parameter
+
+      `n` is generate_vendor_master's own parameter, 120. Most vendors have no
+      collision, so it left the loop as 2, and 2 // 6 is 0. Twenty declared
+      groups became ONE.
+
+      WHAT THAT PRODUCED. A master with one group of three vendors sharing one
+      account — and all 37 legit_group_shared_account cases across both splits
+      drawn from that single configuration. The headline result, "corporate
+      groups 12/12 allowed on the holdout", was true and nearly meaningless: it
+      exercised one group, one shared account, twelve times.
+
+      AND IT WAS NOT LOCAL. One group instead of twenty is a different number of
+      RNG draws, so the stream shifted and every subsequent value changed. Of
+      the old and new dev splits, ZERO rows are byte-identical and only 379 case
+      ids even overlap. The first corpus was not a narrower version of the
+      second; it was a different dataset.
+
+      WHY NOTHING CAUGHT IT. Every one of the 216 tests passed, both evals ran
+      clean, the generator was byte-identical across two runs, and the leakage
+      guard reported 0/551. One declared group IS a structurally valid vendor
+      master. Nothing asserted that the corpus contained ENOUGH of a scenario to
+      measure it — which is this project's own recurring finding, a coded
+      capability with no data behind it, except applied to the data itself.
+
+      THE GUARD. test_the_corpus_actually_contains_the_scenarios_it_claims now
+      puts a DIVERSITY floor on the master: unique domains, >= 10 declared
+      groups, >= 5 shared accounts, and every shared account confined to a
+      single group. A shape assertion could not have caught this; only a floor
+      on coverage can.
+
+      THE HOLDOUT WAS THEREFORE SCORED TWICE, and both runs are reported. This
+      is not a discipline violation dressed up: nothing was tuned from what the
+      first holdout showed, the regeneration was forced by a figure that did not
+      reconcile rather than by a result anyone disliked, and the second corpus
+      is a different dataset rather than a second look at the same one. But
+      "scored once" is a claim this project makes, so the exception is recorded
+      rather than quietly absorbed.
 
 V2.S  THE SCHEMA, DECIDED IN FULL BEFORE THE GENERATOR RUNS (Phase 2)
 

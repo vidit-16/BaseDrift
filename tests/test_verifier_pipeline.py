@@ -564,6 +564,54 @@ def test_the_account_index_keeps_every_owner_of_a_shared_account():
             assert acct in vendors[vid].all_known_accounts()
 
 
+def test_the_corpus_actually_contains_the_scenarios_it_claims():
+    """
+    A DIVERSITY floor on the vendor master, not just a shape check.
+
+    Every existing test passed on a master with ONE declared group of three
+    vendors sharing ONE account — because a variable named `n` in the domain
+    de-duplication loop shadowed the vendor-count parameter, leaving n == 2 for
+    `range(max(1, n // 6))`. Twenty groups became one. The corpus generated
+    cleanly, all 216 tests passed, every eval ran, and the headline
+    "corporate groups 12/12 allowed" was quietly computed over three vendors
+    and a single account configuration.
+
+    Shape assertions cannot catch that: one group IS a valid master. Only a
+    floor on how much of the scenario the data actually covers can, which is
+    the same "coded capability with nothing behind it" check this project keeps
+    applying to code, applied to the data instead.
+    """
+    import collections
+    vendors = pipeline.load_vendors()
+
+    domains = collections.Counter(v.known_domain for v in vendors.values())
+    assert all(c == 1 for c in domains.values()), (
+        "vendor domains are not unique; a domain shared by two unrelated "
+        "vendors makes the sender ambiguous and turns triage's vendor "
+        "resolution into a coin flip")
+
+    groups = collections.Counter(v.group_id for v in vendors.values() if v.group_id)
+    assert len(groups) >= 10, (
+        f"only {len(groups)} declared group(s) in the master; the "
+        f"corporate-group result would be measured over almost nothing")
+
+    owners = collections.defaultdict(set)
+    for v in vendors.values():
+        for acct in v.all_known_accounts():
+            owners[acct].add(v.vendor_id)
+    shared = [a for a, o in owners.items() if len(o) > 1]
+    assert len(shared) >= 5, (
+        f"only {len(shared)} shared account(s); the reproducible v1 false "
+        f"rejection is barely represented")
+
+    # And the shape that would make those cases mislabelled rather than sparse.
+    for acct in shared:
+        gids = {vendors[v].group_id for v in owners[acct]}
+        assert len(gids) == 1 and "" not in gids, (
+            f"account {acct} is shared across different groups (or an "
+            f"ungrouped vendor); that is the mule pattern, not a group")
+
+
 def test_every_vendor_has_exactly_one_primary_account():
     for v in pipeline.load_vendors().values():
         assert sum(1 for a in v.accounts if a.is_primary) == 1

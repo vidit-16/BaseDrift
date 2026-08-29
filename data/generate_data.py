@@ -270,10 +270,14 @@ def generate_vendor_master(n=75):
         cand = base
         if cand in taken:
             cand = _domain(f"{v['legal_name']} {v['city']}")
-        n = 2
+        # NOT `n`: that is the vendor-count parameter, and shadowing it here
+        # left n == 2 for the group loop below, which then built ONE group
+        # instead of twenty. The corpus generated cleanly, every eval ran, and
+        # the corporate-group result was quietly computed over three vendors.
+        suffix = 2
         while cand in taken:
-            cand = base.replace(".com", f"{n}.com")
-            n += 1
+            cand = base.replace(".com", f"{suffix}.com")
+            suffix += 1
         taken.add(cand)
         v["known_domain"] = cand
 
