@@ -9,7 +9,7 @@ this file never pretends otherwise.
     python src/webhook_demo.py
 
 Four of the five scenarios need no API key. The fifth reads an actual
-change-request email and needs GROQ_API_KEY; it is skipped with a note if unset.
+change-request email and needs an API key; it is skipped with a note if unset.
 
 To run the server for yourself instead:
     set RAZORPAY_WEBHOOK_SECRET=whsec_demo
@@ -130,7 +130,9 @@ def show(label, expectation, sent):
     print(f"    payout_allowed = {a['payout_allowed']}")
     for act in a["razorpay_actions"]:
         if act["method"]:
-            print(f"    api         : {act['method']} {act['endpoint']}")
+            flag = ('   [RECOMMENDED — needs human confirmation]'
+                    if act.get('requires_human_confirmation') else '')
+            print(f"    api         : {act['method']} {act['endpoint']}{flag}")
         else:
             print(f"    api         : {act['effect']}")
     print()
@@ -165,7 +167,8 @@ def main():
 
     print("3. MULE ACCOUNT — destination belongs to a different vendor")
     show("payout -> an account already on file under another contact",
-         "BLOCK. Cross-contact reuse is how one attacker collects from many.",
+         ("HOLD + recommend reject. Cross-contact reuse is how one attacker "
+          "collects from many — and since V2.1 even that ends with a human."),
          signed_post(client, "fa_mule"))
 
     print("4. FORGED WEBHOOK — an attacker calling the endpoint directly")
@@ -175,7 +178,7 @@ def main():
 
     print("5. THE BEC CASE — a real change-request email, read by the model")
     if not llm_client.get_api_key():
-        print("    SKIPPED — GROQ_API_KEY is not set, so the semantic layer")
+        print("    SKIPPED — no API key is set, so the semantic layer")
         print("    cannot run. The demo will not fabricate a verdict without it.")
         print()
     else:
@@ -184,7 +187,8 @@ def main():
             "text": CHANGE_REQUEST})
         print(f"    AP system posted the change request -> {r.json()['document_id']}")
         show("payout -> the account named in that email",
-             "BLOCK. Every bank-level check passes; authorisation is absent.",
+             ("HOLD + recommend reject. Every bank-level check passes; "
+              "authorisation is absent."),
              signed_post(client, "fa_new",
                          notes={"payeeproof_document_id": "doc_bec"}))
 

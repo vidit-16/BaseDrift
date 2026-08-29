@@ -31,7 +31,8 @@ TIER 1 — identity binding (against vendor master, never against request)
 
   account_status (from FAV):
     active      PASS
-    inactive    FAIL    the bank says this account cannot receive
+    inactive    INCONCLUSIVE  the bank says it cannot receive right now,
+                              which is a reason to ask, not to refuse
     unknown     WARN    FAV inconclusive — not the same as clean
 
   gstin:
@@ -81,6 +82,13 @@ SIGNAL STATES — four, not three
 DECISION POLICY — first match wins
 ═══════════════════════════════════════════════════════════════════════
 
+NOTHING REJECTS UNATTENDED. The harshest automatic outcome this engine can
+reach is a HOLD. Rules that once rejected now set recommended_action="reject"
+and wait for a human, exactly as fund-account deactivation already did.
+Rejecting a payout is recoverable only in principle — it stops a real vendor
+being paid and can break payment terms. A hold costs a phone call. And a
+rejection prevents no fraud a hold does not: in both cases the money stays put.
+
   1. extraction failed                          STEP_UP
      "we couldn't check" != "we found fraud"
 
@@ -91,7 +99,7 @@ DECISION POLICY — first match wins
      2b. destination unknown / unresolvable      STEP_UP
          the layer says "no change" while the money goes somewhere new,
          or we cannot tell where it goes — a contradiction, not a clearance
-     2c. destination belongs to another vendor   BLOCK
+     2c. destination belongs to another vendor   HOLD + recommend reject
 
      Rule 2 used to return ALLOW on the intent label alone, before any
      identity check ran. That made a single LLM output sufficient to release
@@ -101,9 +109,10 @@ DECISION POLICY — first match wins
      thing that must hold is that the destination really is unchanged.
      Running the full battery would step up every routine follow-up.
 
-  3. any Tier 1 FAIL                            BLOCK
+  3. any Tier 1 FAIL                            HOLD + recommend reject
 
-  4. REPLACE + new account + a DECEPTION signal + >=1 Tier 2 WARN   BLOCK
+  4. REPLACE + new account + a DECEPTION signal + >=1 Tier 2 WARN
+                                                HOLD + recommend reject
      (WARN only — INCONCLUSIVE signals never contribute to a rejection)
 
      A rejection requires evidence that someone is trying to be mistaken for
@@ -135,6 +144,12 @@ DECISION POLICY — first match wins
   5. any Tier 1 WARN or INCONCLUSIVE            STEP_UP
 
   6. any Tier 2 WARN or INCONCLUSIVE            STEP_UP
+
+     Tier 2 also carries INBOX evidence when the caller supplies it (V2.3):
+     first contact, a reply with no conversation behind it, a sender who keeps
+     moving the destination, a vendor identified only from text in the body.
+     Every one is WARN or INCONCLUSIVE and never PASS, enforced at the point
+     they are added, because a mailbox owner can author their own history.
 
   7. all PASS                                   ALLOW
 
@@ -209,6 +224,27 @@ class FAVResult:
 
 
 @dataclass
+class AccountRecord:
+    """
+    One account on file, with the provenance that decides whether it can be
+    trusted for anything. The account number alone is not enough: the vendor
+    master is the root of trust for every check here, so an account that entered
+    it unverified is worthless as an anchor — the destination would be checked
+    against a record an attacker could have written.
+    """
+    account_number:       str
+    ifsc:                 str = ""
+    status:               str = "active"
+    added_on:             str = ""     # ISO date
+    added_via:            str = ""     # onboarding | portal | email_request | phone_request
+    verified_by:          str = ""     # onboarding_kyc | penny_drop | callback | unverified
+    verified_on:          str = ""
+    settled_payout_count: int = 0
+    last_settled_on:      str = ""
+    is_primary:           bool = False
+
+
+@dataclass
 class VendorRecord:
     vendor_id:            str
     legal_name:           str
@@ -218,11 +254,40 @@ class VendorRecord:
     known_account_number: str
     known_ifsc:           str
     avg_payout_amount:    float
-    # Multiple fund accounts per contact are permitted by RazorpayX
-    additional_accounts:  List[str] = field(default_factory=list)
+    # A DECLARED corporate group, never inferred from a shared account — a
+    # shared account is the thing being judged. Blank means no group, and two
+    # blanks are NOT a match; see same_group().
+    group_id:             str = ""
+    # Every account on file, primary included. RazorpayX permits several fund
+    # accounts per contact, and until v2 this system pretended otherwise: the
+    # field existed, nothing populated it, and a vendor with a genuine second
+    # account was held on every payout to it, permanently.
+    accounts:             List["AccountRecord"] = field(default_factory=list)
 
     def all_known_accounts(self) -> List[str]:
-        return [self.known_account_number] + list(self.additional_accounts)
+        known = [self.known_account_number] if self.known_account_number else []
+        for a in self.accounts:
+            if a.account_number not in known:
+                known.append(a.account_number)
+        return known
+
+    def account(self, number: str) -> Optional["AccountRecord"]:
+        for a in self.accounts:
+            if a.account_number == number:
+                return a
+        return None
+
+
+def same_group(a: VendorRecord, b: VendorRecord) -> bool:
+    """
+    Two vendors in one declared corporate group.
+
+    The `and a.group_id` is the whole function. Without it two blanks compare
+    equal, every ungrouped pair in the master reads as a group, and the
+    cross-contact reuse check — the one that catches the mule pattern — is off
+    for the ~60% of vendors that belong to no group at all.
+    """
+    return bool(a.group_id) and a.group_id == b.group_id
 
 
 @dataclass
@@ -235,6 +300,11 @@ class Decision:
     tier2:          List[Signal] = field(default_factory=list)
     payout_allowed: bool = False
     needs_callback: bool = False
+    # What the engine would do if a human agreed. Rejection is no longer
+    # automatic: a BLOCK stops no fraud that a HOLD does not also stop — the
+    # money does not move either way — so it bought operational convenience and
+    # paid for it with the only customer-facing failure this system has.
+    recommended_action: Optional[str] = None
     # Provenance of the account actually checked — belongs in the audit trail,
     # since "which account did you validate" is the whole question here.
     checked_destination: Optional[str] = None
@@ -250,6 +320,7 @@ class Decision:
             "needs_callback": self.needs_callback,
             "checked_destination": self.checked_destination,
             "destination_source": self.destination_source,
+            "recommended_action": self.recommended_action,
             "tier1": [vars(s) for s in self.tier1],
             "tier2": [vars(s) for s in self.tier2],
         }
@@ -385,8 +456,17 @@ def check_account_status(fav: FAVResult) -> Signal:
     if st == "active":
         return Signal("account_status", 1, PASS, "account is active", "razorpay_fav")
     if st == "inactive":
-        return Signal("account_status", 1, FAIL,
-                      "bank reports the account inactive — it cannot receive",
+        # INCONCLUSIVE, not FAIL. This was an overcorrection: the field went
+        # from being read by nothing at all to being a hard identity conflict.
+        # It caused ALL FIVE false rejections across both v1 splits, occurs on
+        # ~2% of cases in each, and is UNCORRELATED with fraud.
+        #
+        # "The bank says this account cannot receive right now" is a reason to
+        # ask the vendor, not to refuse them: a dormant, newly opened or
+        # KYC-pending account looks exactly like this and is not fraud.
+        return Signal("account_status", 1, INCONCLUSIVE,
+                      "bank reports the account inactive — it cannot receive; "
+                      "a reason to ask, not to refuse",
                       "razorpay_fav")
     return Signal("account_status", 1, INCONCLUSIVE,
                   f"account status {st or 'missing'!r} — FAV inconclusive, not clean",
@@ -418,15 +498,27 @@ def check_gstin(ext: ExtractionResult, v: VendorRecord) -> Signal:
 
 
 def check_account_continuity(ext: ExtractionResult, v: VendorRecord,
-                              other_vendor_accounts: Optional[Dict[str, str]] = None,
-                              destination_account_number: Optional[str] = None) -> Signal:
+                              other_vendor_accounts=None,
+                              destination_account_number: Optional[str] = None,
+                              vendors: Optional[Dict[str, VendorRecord]] = None
+                              ) -> Signal:
     """
     Checks the account the money will actually reach — see resolve_destination().
 
-    other_vendor_accounts: {account_number: vendor_id} across the whole
-    vendor master. RazorpayX allows the same account under multiple
-    contacts, which is legitimate for corporate groups but is also
-    exactly how one attacker redirects several vendors to one destination.
+    other_vendor_accounts: {account_number: set(vendor_ids)} across the whole
+    vendor master. RazorpayX allows the same account under multiple contacts,
+    which is legitimate for corporate groups and is also exactly how one
+    attacker redirects several vendors to one destination. Those two are
+    indistinguishable without an explicit group, which is why this used to
+    reject the legitimate one.
+
+    It was a Dict[str, str] built with `idx[acct] = vendor_id` in a loop, so a
+    second vendor SILENTLY OVERWROTE the first and a payout to a shared account
+    fired the cross-contact FAIL for whichever vendor lost the race. The dict
+    was the bug; the rule reading it was correct all along.
+
+    A plain {account: vendor_id} mapping is still accepted so callers that have
+    not migrated keep working, and is read as a one-element set.
     """
     dest, src = resolve_destination(ext, destination_account_number)
 
@@ -448,12 +540,36 @@ def check_account_continuity(ext: ExtractionResult, v: VendorRecord,
             else "UNVERIFIED — from the request, no payout destination supplied")
 
     if other_vendor_accounts:
-        owner = other_vendor_accounts.get(dest)
-        if owner and owner != v.vendor_id:
+        owners = other_vendor_accounts.get(dest) or set()
+        if isinstance(owners, str):
+            owners = {owners}
+        strangers = {o for o in owners if o != v.vendor_id}
+
+        # A sibling in the same DECLARED group is not a stranger. One treasury
+        # facility across a group's companies is ordinary, and rejecting it was
+        # a reproducible false rejection, not a theoretical one.
+        siblings, outsiders = set(), set()
+        for o in strangers:
+            other = (vendors or {}).get(o)
+            if other is not None and same_group(other, v):
+                siblings.add(o)
+            else:
+                outsiders.add(o)
+
+        if outsiders:
             return Signal("account_continuity", 1, FAIL,
                           f"account {dest} ({prov}) is already on file for a "
-                          f"different vendor ({owner}) — cross-contact reuse",
+                          f"different vendor ({', '.join(sorted(outsiders))}) "
+                          f"outside this vendor's declared group — "
+                          f"cross-contact reuse",
                           "vendor_master_crosscheck")
+
+        if siblings and dest in v.all_known_accounts():
+            return Signal("account_continuity", 1, PASS,
+                          f"{dest} ({prov}) is a shared facility inside declared "
+                          f"group {v.group_id}, with "
+                          f"{', '.join(sorted(siblings))}",
+                          f"{src} vs vendor_master")
 
     if dest in v.all_known_accounts():
         return Signal("account_continuity", 1, PASS,
@@ -539,7 +655,32 @@ def decide(ext: ExtractionResult,
            other_vendor_accounts: Optional[Dict[str, str]] = None,
            near_duplicate: bool = False,
            split_below: bool = False,
-           destination_account_number: Optional[str] = None) -> Decision:
+           destination_account_number: Optional[str] = None,
+           # The whole master, so a shared account can be checked against a
+           # DECLARED group. Optional: callers that do not pass it get the old
+           # behaviour, where any second owner is a stranger.
+           vendors: Optional[Dict[str, VendorRecord]] = None,
+           # Signals derived from the merchant's mailbox. Rejected at the door
+           # unless Tier 2 and non-PASS; see the check where they are appended.
+           inbox_signals: Optional[List[Signal]] = None) -> Decision:
+
+    # Inbox evidence (V2.3), validated BEFORE any rule runs.
+    #
+    # It sat at the point of use at first, which put it after R1 and R2 — so a
+    # follow-up short-circuited to ALLOW without the check ever running, and
+    # whether a smuggled signal was caught depended on which rule fired. A
+    # guard that only some paths reach is not a guard.
+    #
+    # TIER 2 ONLY, never PASS: no amount of mailbox history can satisfy a rule
+    # that requires a clean signal. A mailbox owner can send themselves
+    # messages and author their own correspondence, so evidence an attacker can
+    # write must never be able to say yes. See
+    # inbox_signals.assert_cannot_release().
+    for sig in (inbox_signals or []):
+        if sig.tier != 2 or sig.result == PASS:
+            raise ValueError(
+                f"inbox signal {sig.name!r} is Tier {sig.tier}/{sig.result}; "
+                f"inbox evidence is Tier 2 and may never PASS")
 
     # Rule 1 — extraction failed
     if not ext.ok:
@@ -557,7 +698,7 @@ def decide(ext: ExtractionResult,
     # Continuity runs on EVERY path, including the "nothing is changing" one —
     # verifying that claim is precisely what it is for.
     continuity = check_account_continuity(ext, vendor, other_vendor_accounts,
-                                          destination_account_number)
+                                          destination_account_number, vendors)
 
     # Rule 2 — the request claims no change is being made. Check that claim
     # against the real destination rather than accepting it. This used to return
@@ -567,7 +708,9 @@ def decide(ext: ExtractionResult,
     if ext.intent == INTENT_FOLLOWUP:
         if continuity.result == FAIL:
             return Decision(
-                outcome=BLOCK,
+                outcome=STEP_UP,
+                recommended_action="reject",
+                needs_callback=True,
                 rule_fired="R2c_followup_destination_conflict",
                 reason="Request asks for no destination change, but the payout is "
                        "headed to an account on file for a different vendor: "
@@ -626,6 +769,7 @@ def decide(ext: ExtractionResult,
         check_channel_manipulation(ext),
         check_payment_pattern(ext, vendor, near_duplicate, split_below),
     ]
+    t2.extend(inbox_signals or [])
 
     t1_fail = [s for s in t1 if s.result == FAIL]
     # "Not clean" holds the payout (R5/R6). Only WARN — actual adverse evidence —
@@ -641,7 +785,9 @@ def decide(ext: ExtractionResult,
     # Rule 3 — hard identity conflict
     if t1_fail:
         return Decision(
-            outcome=BLOCK,
+            outcome=STEP_UP,
+            recommended_action="reject",
+            needs_callback=True,
             rule_fired="R3_identity_conflict",
             reason="Identity conflict against the vendor master: "
                    + "; ".join(f"{s.name} — {s.detail}" for s in t1_fail),
@@ -656,7 +802,9 @@ def decide(ext: ExtractionResult,
     if (ext.action == ACTION_REPLACE and new_account
             and deception and len(t2_warn) >= 1):
         return Decision(
-            outcome=BLOCK,
+            outcome=STEP_UP,
+            recommended_action="reject",
+            needs_callback=True,
             rule_fired="R4_bec_pattern",
             reason=("Request would REPLACE the existing payout destination with a "
                     "previously unseen account, and carries evidence of deliberate "

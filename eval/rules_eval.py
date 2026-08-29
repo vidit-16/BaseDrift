@@ -24,6 +24,12 @@ False for fraud and True for legit. The callback therefore separates the classes
 perfectly on its own. A pipeline that runs NO RULES and simply holds every payout
 for a callback scores 100% recall and 100% precision on this dataset.
 
+Since V2.1 the engine cannot reject anything: the harshest outcome it reaches is
+a hold, and rules that once rejected now attach a recommendation a human acts
+on. So the step-up column went UP and the FALSE BLOCK column went to zero, and
+neither movement is an accuracy result. What the rules still buy over holding
+everything is the release rate — the payouts that never need a phone call.
+
 So accuracy cannot distinguish PayeeProof from doing nothing. What the rules
 actually buy is a lower STEP-UP RATE: the same fraud capture while phoning the
 vendor far less often. Every run below is reported against that null baseline,
@@ -44,6 +50,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "src"))
 
+import pipeline  # noqa: E402
 import verifier  # noqa: E402
 from decision_engine import (  # noqa: E402
     decide, Decision, FAVResult, VendorRecord,
@@ -59,29 +66,28 @@ from extractor import (  # noqa: E402
 DATA = os.path.join(HERE, "..", "data")
 SCENARIOS = (
     "fraud_easy", "fraud_hard", "fraud_compromised", "fraud_mule", "fraud_sim_swap",
+    "fraud_planted_account", "fraud_first_contact", "fraud_thread_hijack",
     "legit_easy", "legit_hard", "legit_rebrand", "legit_add_account",
-    "legit_unreachable",
+    "legit_unreachable", "legit_group_shared_account", "legit_second_account",
+    "legit_added_then_paid",
 )
 
 
 # ── Loading ───────────────────────────────────────────────────────────
 
 def load_vendors():
-    path = os.path.join(DATA, "vendor_master.csv")
-    with open(path, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    vendors = {
-        r["vendor_id"]: VendorRecord(
-            vendor_id=r["vendor_id"], legal_name=r["legal_name"], gstin=r["gstin"],
-            known_domain=r["known_domain"], known_phone=r["known_phone"],
-            known_account_number=r["known_account_number"],
-            known_ifsc=r["known_ifsc"],
-            avg_payout_amount=float(r["avg_payout_amount"]),
-        )
-        for r in rows
-    }
-    index = {v.known_account_number: vid for vid, v in vendors.items()}
-    return vendors, index
+    """
+    Delegates to pipeline, rather than reimplementing the read.
+
+    This used to build its own index as {primary_account: vendor_id}, which
+    silently disagreed with pipeline's in two ways at once: it ignored every
+    non-primary account, and it overwrote on collision. An evaluator that loads
+    the trust store differently from the system under test is measuring
+    something that does not exist.
+    """
+    vendors = pipeline.load_vendors(os.path.join(DATA, "vendor_master.csv"),
+                                    os.path.join(DATA, "vendor_accounts.csv"))
+    return vendors, pipeline.build_account_index(vendors)
 
 
 def load_cases(split):
@@ -147,6 +153,18 @@ class Result:
         # hides which of the two you are actually causing.
         self.false_block = 0
         self.false_hold = 0
+        # V2.1 makes false_block 0 BY CONSTRUCTION — no rule can reject any
+        # more — so on its own that column now says nothing. These two keep the
+        # number honest: they count the holds the engine wanted to end in a
+        # rejection, and how many of those are legitimate. That second figure is
+        # what v1 rejected outright and what a human now decides instead.
+        self.recommended = 0
+        self.recommended_legit = 0
+        # V2.6. Channel 2 unavailable is a THIRD state, not a quiet failure,
+        # and it needs its own count: if it were large it would mean the
+        # seasoning policy is holding legitimate vendors wholesale.
+        self.c2_unavailable = 0
+        self.c2_named_but_uncontrolled = 0
         self.missed_fraud_allowed = 0
         self.outcomes = collections.Counter()
         self.rules = collections.Counter()
@@ -173,6 +191,10 @@ class Result:
         return self.false_hold / legit if legit else 0.0
 
     @property
+    def recommended_rate(self):
+        return self.recommended / self.n if self.n else 0.0
+
+    @property
     def stepup_rate(self):
         return self.outcomes[STEP_UP] / self.n if self.n else 0.0
 
@@ -185,15 +207,34 @@ def evaluate(rows, vendors, index, decide_fn, name):
     r = Result(name, len(rows))
     for row in rows:
         vendor = vendors[row["vendor_id"]]
-        dec = decide_fn(row, vendor, index)
+        dec = decide_fn(row, vendor, index, vendors)
         r.outcomes[dec.outcome] += 1
         r.rules[dec.rule_fired] += 1
+        if dec.recommended_action == "reject":
+            r.recommended += 1
+            if row["label"] != "fraud":
+                r.recommended_legit += 1
 
+        # The CSV says which accounts the requester can actually send from. It
+        # does NOT say which account should be demanded — that is the policy's
+        # job, and keeping the two apart is what makes the policy measurable.
+        # v1's single controls_existing_account bool answered both questions at
+        # once, which is why the planted-account hole stayed invisible.
+        controls = [a for a in
+                    (row.get("requester_controls_accounts") or "").split(";") if a]
         ver = verifier.verify(dec, vendor,
                               row["callback_reaches_known_contact"] == "True",
                               row["case_id"],
-                              controls_existing_account=(
-                                  row.get("controls_existing_account") == "True"))
+                              requester_controls_accounts=controls,
+                              as_of=row.get("request_date") or None,
+                              requested_via="email_request")
+        if ver is not None:
+            if ver.outcome == verifier.UNAVAILABLE_C2:
+                r.c2_unavailable += 1
+            elif (ver.verification_account
+                  and ver.verification_account not in controls and controls):
+                r.c2_named_but_uncontrolled += 1
+
         final = ver.final_outcome if ver else dec.outcome
         allowed = ver.payout_allowed if ver else dec.payout_allowed
         caught = not allowed
@@ -219,7 +260,20 @@ def evaluate(rows, vendors, index, decide_fn, name):
 
 # ── Decision functions under test ─────────────────────────────────────
 
-def payeeproof(row, vendor, index):
+def payeeproof(row, vendor, index, vendors=None):
+    """
+    `vendors` is the whole master, and it is a PARAMETER rather than a module
+    global for a reason that cost a measurement.
+
+    It was a global, set inside evaluate(). eval/extraction_eval.py imports this
+    function and calls it directly, never going through evaluate() — so the
+    global stayed None, decide() lost the ability to tell a shared account
+    inside a DECLARED group from the mule pattern, and the "ideal" upper bound
+    reported 79.0% precision against the 85.9% rules_eval measured on the same
+    cases. An upper bound that the real system beats is not an upper bound; it
+    is a broken baseline, and it read as the v1 behaviour that rejected
+    corporate groups.
+    """
     ext = features_to_extraction(row, vendor)
     # FAV is a live dependency: sometimes unavailable, sometimes reporting a
     # non-active account. Both branches previously had zero dataset coverage.
@@ -231,11 +285,12 @@ def payeeproof(row, vendor, index):
                   other_vendor_accounts=index,
                   near_duplicate=row["near_duplicate_invoice"] == "True",
                   split_below=row["split_below_threshold"] == "True",
-                  destination_account_number=row["proposed_account_number"])
+                  destination_account_number=row["proposed_account_number"],
+                  vendors=vendors)
 
 
 def _fixed(outcome, allowed):
-    def fn(row, vendor, index):
+    def fn(row, vendor, index, vendors=None):
         return Decision(outcome=outcome, rule_fired=f"BASELINE_{outcome}",
                         reason="baseline", triggered_by=[],
                         payout_allowed=allowed, needs_callback=(outcome == STEP_UP))
@@ -259,16 +314,18 @@ def report(results, split, n):
     print("This measures the DECISION ENGINE only. It is an upper bound;")
     print("the extractor can only erode it. Not an end-to-end figure.")
     print()
-    print(f"  {'system':36s} {'recall':>7s} {'prec':>6s} {'step-up':>8s} "
-          f"{'FALSE BLOCK':>12s} {'false hold':>11s}")
-    print("  " + "-" * 84)
+    print(f"  {'system':36s} {'recall':>7s} {'prec':>6s} {'held':>7s} "
+          f"{'rec.rej':>8s} {'FALSE BLOCK':>12s} {'false hold':>11s}")
+    print("  " + "-" * 92)
     for r in results:
         star = " *" if r.name.startswith("PayeeProof") else "  "
         print(f"{star}{r.name:36s} {r.recall:7.1%} {r.precision:6.1%} "
-              f"{r.stepup_rate:8.1%} {r.false_block_rate:11.1%} {r.false_hold_rate:11.1%}")
+              f"{r.stepup_rate:7.1%} {r.recommended_rate:8.1%} "
+              f"{r.false_block_rate:11.1%} {r.false_hold_rate:11.1%}")
     print()
     print("  recall      = fraud not released      FALSE BLOCK = legit REJECTED (severe)")
-    print("  step-up     = callbacks required      false hold  = legit held for review")
+    print("  held        = payout not released     false hold  = legit held for review")
+    print("  rec.rej     = held, and the engine recommends a human reject it")
     print()
 
     pp = next(r for r in results if r.name.startswith("PayeeProof"))
@@ -287,8 +344,28 @@ def report(results, split, n):
     if pp.false_block:
         print(f"  {pp.false_block} legitimate request(s) REJECTED outright — "
               f"{pp.false_block_rate:.1%} of all legitimate traffic.")
+    else:
+        print("  0 legitimate requests rejected — but read that as 0 BY "
+              "CONSTRUCTION, not as an")
+        print("  accuracy result: no rule can reject any more (V2.1). The number "
+              "that replaces it:")
+        legit = pp.fp + pp.tn
+        print(f"  {pp.recommended} held case(s) carry a rejection recommendation, "
+              f"{pp.recommended_legit} of them legitimate")
+        print(f"  ({pp.recommended_legit / legit if legit else 0:.1%} of legitimate "
+              f"traffic). v1 would have rejected exactly those unattended;")
+        print("  they now wait for a human, which is the whole of the change.")
     if pp.missed_fraud_allowed:
         print(f"  {pp.missed_fraud_allowed} fraud case(s) RELEASED.")
+    print()
+
+    print(f"  Channel 2: {pp.c2_unavailable} case(s) had NO account qualifying to "
+          f"prove control")
+    print(f"             ({pp.c2_unavailable / n:.1%}); those escalate and never "
+          f"fall back to the callback.")
+    print(f"             {pp.c2_named_but_uncontrolled} case(s) controlled SOME "
+          f"account on file but not the")
+    print(f"             one this system named — the planted-account pattern.")
     print()
 
     print("  PayeeProof, final outcome by scenario   (! marks a wrong outcome):")
@@ -327,8 +404,8 @@ def sweep(rows, vendors, index):
           f"{'FALSE BLOCK':>12s}")
     print("  " + "-" * 52)
     for k in range(1, 6):
-        def fn(row, vendor, idx, _k=k):
-            d = payeeproof(row, vendor, idx)
+        def fn(row, vendor, idx, vendors=None, _k=k):
+            d = payeeproof(row, vendor, idx, vendors)
             if d.rule_fired == "R4_bec_pattern":
                 n_warn = sum(1 for s in d.tier2 if s.result == WARN)
                 if n_warn < _k:

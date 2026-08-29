@@ -27,7 +27,7 @@ from extractor import (  # noqa: E402
     SCOPE_BOTH, SCOPE_NONE,
 )
 from decision_engine import (  # noqa: E402
-    decide, FAVResult, VendorRecord,
+    decide, FAVResult, VendorRecord, AccountRecord, same_group,
     ALLOW, STEP_UP, BLOCK,
     WARN as WARN_,
 )
@@ -50,7 +50,10 @@ VENDOR = VendorRecord(
 )
 
 # OTHER_ACCT belongs to a different vendor — cross-contact reuse.
-ACCOUNT_INDEX = {KNOWN_ACCT: "VEND0069", OTHER_ACCT: "VEND0123"}
+# A SET of owners, not one id: an account legitimately belongs to more than one
+# contact inside a corporate group, and the dict that used to hold a single
+# owner silently overwrote and rejected the group.
+ACCOUNT_INDEX = {KNOWN_ACCT: {"VEND0069"}, OTHER_ACCT: {"VEND0123"}}
 
 FAV_CLEAN = FAVResult("active", "Balaji Logistics", 99)
 
@@ -94,9 +97,11 @@ def test_followup_to_unknown_destination_does_not_allow():
     assert d.payout_allowed is False
 
 
-def test_followup_to_other_vendors_account_blocks():
+def test_followup_to_other_vendors_account_holds_and_recommends_rejection():
     d = run(ext(intent=INTENT_FOLLOWUP), dest=OTHER_ACCT)
-    assert d.outcome == BLOCK
+    assert d.outcome == STEP_UP
+    assert d.recommended_action == "reject"
+    assert d.payout_allowed is False
     assert d.rule_fired == "R2c_followup_destination_conflict"
 
 
@@ -130,12 +135,28 @@ def test_injection_flipping_intent_cannot_release_payout():
 
 # ── P0.2 — FAV account_status must be read ───────────────────────────
 
-def test_inactive_account_blocks_despite_perfect_name_match():
+def test_inactive_account_holds_but_is_not_an_identity_conflict():
+    """
+    V2.5. This began as the opposite assertion, and the opposite was wrong.
+    account_status went from being read by nothing at all to being a hard
+    identity conflict, and that overcorrection produced every false rejection
+    in v1 — on a field that is UNCORRELATED with fraud in the dataset.
+
+    A dormant account, one opened last week, and one with KYC still pending all
+    report inactive. "The bank says this cannot receive right now" is a reason
+    to ask the vendor, never a reason to refuse them.
+    """
+    from decision_engine import check_account_status, FAIL, INCONCLUSIVE
+    sig = check_account_status(FAVResult("inactive", "Balaji Logistics", 99))
+    assert sig.result == INCONCLUSIVE
+    assert sig.result != FAIL
+
     d = run(ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
                 account=NEW_ACCT),
             dest=NEW_ACCT, fav=FAVResult("inactive", "Balaji Logistics", 99))
-    assert d.outcome == BLOCK
-    assert "account_status" in d.triggered_by
+    assert d.payout_allowed is False          # still not released
+    assert d.recommended_action is None       # and no longer a rejection
+    assert d.rule_fired.startswith("R5")
 
 
 def test_unknown_account_status_never_allows():
@@ -291,11 +312,12 @@ def test_lookalike_does_not_flag_a_rebrand():
         assert not is_lookalike_domain(legit, known), legit
 
 
-def test_typosquat_plus_one_warn_blocks():
+def test_typosquat_plus_one_warn_recommends_rejection():
     e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
             account=NEW_ACCT, domain="balaj1logistic.com", urgency=True)
     d = run(e, dest=NEW_ACCT)
-    assert d.outcome == BLOCK
+    assert d.outcome == STEP_UP
+    assert d.recommended_action == "reject"
     assert d.rule_fired == "R4_bec_pattern"
 
 
@@ -309,8 +331,9 @@ def test_rebrand_domain_with_many_warns_does_not_block():
             account=NEW_ACCT, domain="balajilogisticgroup.com",
             urgency=True, channel=True, amount=500000.0)
     d = run(e, dest=NEW_ACCT)
-    assert d.outcome != BLOCK, f"rejected a legitimate rebrand via {d.rule_fired}"
     assert d.outcome == STEP_UP
+    assert d.recommended_action is None, (
+        f"recommended rejecting a legitimate rebrand via {d.rule_fired}")
 
 
 def test_contextual_signals_alone_never_reject():
@@ -395,14 +418,155 @@ def test_extraction_failure_still_steps_up():
     assert d.payout_allowed is False
 
 
-def test_bec_pattern_still_blocks():
+def test_bec_pattern_still_caught():
     """The hero shape: REPLACE to a new account under >=2 contextual warns."""
     e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
             account=NEW_ACCT, domain="balaj1logistic.com", urgency=True,
             amount=None)
     d = run(e, dest=NEW_ACCT)
-    assert d.outcome == BLOCK
+    assert d.payout_allowed is False
+    assert d.recommended_action == "reject"
     assert d.rule_fired == "R4_bec_pattern"
+
+
+# ── V2.1: nothing rejects unattended ─────────────────────────────────
+
+def test_no_rule_path_rejects_unattended():
+    """
+    Structural, because a behavioural sweep only covers the inputs someone
+    thought of. There is no BLOCK outcome left in the engine at all, so a future
+    edit has to reintroduce the literal in order to reintroduce the outcome.
+
+    Why removing it is safe rather than merely softer: a rejection prevents no
+    fraud that a hold does not — the money stays put either way — so automatic
+    rejection bought operational convenience and paid for it with the only
+    customer-facing failure this system had. Measured on the 556-case dev split,
+    removing it left recall at 100% and took false rejections to 0.0%.
+    """
+    import decision_engine
+    src = open(decision_engine.__file__, encoding="utf-8").read()
+    body = src.split('"""', 2)[2]      # past the module docstring's rule table
+    assert "outcome=BLOCK" not in body
+
+
+def test_every_recommendation_still_holds_the_payout():
+    """A recommendation is not a decision: the payout is unreleased regardless."""
+    cases = [
+        run(ext(intent=INTENT_FOLLOWUP), dest=OTHER_ACCT),
+        run(ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+                account=NEW_ACCT, domain="balaj1logistic.com", urgency=True),
+            dest=NEW_ACCT),
+        run(ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+                account=OTHER_ACCT), dest=OTHER_ACCT),
+    ]
+    recommended = [d for d in cases if d.recommended_action == "reject"]
+    assert len(recommended) == 3, [d.rule_fired for d in cases]
+    for d in recommended:
+        assert d.outcome == STEP_UP
+        assert d.payout_allowed is False
+        assert d.needs_callback is True
+        assert d.to_dict()["recommended_action"] == "reject"
+
+
+# ══ V2.0 — the vendor master holds more than one account ══════════════
+
+SHARED_ACCT = "606070708080"
+
+
+def _grouped(vendor_id, group_id, extra=()):
+    accts = [AccountRecord(account_number=(KNOWN_ACCT if vendor_id == "VEND0069"
+                                           else "121234345656"),
+                           is_primary=True, settled_payout_count=10,
+                           added_on="2023-01-01", added_via="onboarding",
+                           verified_by="onboarding_kyc")]
+    accts += [AccountRecord(account_number=a, settled_payout_count=4,
+                            added_on="2023-06-01", added_via="portal",
+                            verified_by="penny_drop") for a in extra]
+    return VendorRecord(
+        vendor_id=vendor_id, legal_name="Balaji Logistics",
+        gstin=VENDOR.gstin, known_domain=VENDOR.known_domain,
+        known_phone=VENDOR.known_phone,
+        known_account_number=accts[0].account_number,
+        known_ifsc="KKBK0403467", avg_payout_amount=28000.0,
+        group_id=group_id, accounts=accts,
+    )
+
+
+def test_a_shared_account_inside_a_declared_group_is_not_reuse():
+    """
+    REPRODUCIBLE FALSE REJECTION IN v1, in three lines: build_account_index()
+    assigned account -> vendor in a loop, so the sibling silently overwrote and
+    a payout to the shared facility fired the cross-contact FAIL for whichever
+    vendor lost the race. decision_engine's own comment said sharing an account
+    across contacts is legitimate for corporate groups. The code rejected it.
+    """
+    me = _grouped("VEND0069", "GRP001", extra=[SHARED_ACCT])
+    sibling = _grouped("VEND0123", "GRP001", extra=[SHARED_ACCT])
+    index = {SHARED_ACCT: {"VEND0069", "VEND0123"}}
+    d = decide(ext(intent=INTENT_FOLLOWUP), FAV_CLEAN, me,
+               other_vendor_accounts=index,
+               destination_account_number=SHARED_ACCT,
+               vendors={"VEND0069": me, "VEND0123": sibling})
+    assert d.outcome == ALLOW
+    assert d.recommended_action is None
+    assert d.rule_fired == "R2a_no_change_confirmed"
+
+
+def test_two_vendors_with_no_group_are_not_a_group():
+    """
+    THE TRAP, written as a test because `a.group_id == b.group_id` matches two
+    blanks. Getting this wrong turns the mule check off for every vendor that
+    belongs to no group — most of the master — and it would pass every test
+    that only ever looks at vendors which DO share a group.
+    """
+    me = _grouped("VEND0069", "")
+    stranger = _grouped("VEND0123", "")
+    assert same_group(me, stranger) is False
+    index = {SHARED_ACCT: {"VEND0069", "VEND0123"}}
+    d = decide(ext(intent=INTENT_FOLLOWUP), FAV_CLEAN, me,
+               other_vendor_accounts=index,
+               destination_account_number=SHARED_ACCT,
+               vendors={"VEND0069": me, "VEND0123": stranger})
+    assert d.recommended_action == "reject"
+    assert d.rule_fired == "R2c_followup_destination_conflict"
+
+
+def test_a_vendor_in_a_different_group_is_still_a_stranger():
+    me = _grouped("VEND0069", "GRP001", extra=[SHARED_ACCT])
+    other = _grouped("VEND0123", "GRP002", extra=[SHARED_ACCT])
+    d = decide(ext(intent=INTENT_FOLLOWUP), FAV_CLEAN, me,
+               other_vendor_accounts={SHARED_ACCT: {"VEND0069", "VEND0123"}},
+               destination_account_number=SHARED_ACCT,
+               vendors={"VEND0069": me, "VEND0123": other})
+    assert d.recommended_action == "reject"
+
+
+def test_a_second_account_on_file_is_not_a_new_account():
+    """
+    v1 held EVERY payout to a legitimate second account, forever, because the
+    master recorded one. A permanent false-hold generator, invisible while the
+    data agreed with the bug.
+    """
+    second = "343456567878"
+    me = _grouped("VEND0069", "", extra=[second])
+    d = decide(ext(intent=INTENT_FOLLOWUP), FAV_CLEAN, me,
+               other_vendor_accounts={second: {"VEND0069"}},
+               destination_account_number=second,
+               vendors={"VEND0069": me})
+    assert d.outcome == ALLOW
+    assert d.payout_allowed is True
+
+
+def test_a_missing_vendor_map_still_treats_outsiders_as_strangers():
+    """
+    Fail-safe on the optional argument: a caller that has not migrated must not
+    silently gain a group check that lets shared accounts through.
+    """
+    me = _grouped("VEND0069", "GRP001", extra=[SHARED_ACCT])
+    d = decide(ext(intent=INTENT_FOLLOWUP), FAV_CLEAN, me,
+               other_vendor_accounts={SHARED_ACCT: {"VEND0069", "VEND0123"}},
+               destination_account_number=SHARED_ACCT)
+    assert d.recommended_action == "reject"
 
 
 def test_clean_change_to_known_account_allows():

@@ -50,7 +50,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
-RENDERER_VERSION = "1.1.0"
+RENDERER_VERSION = "2.0.0"
 
 # ── The leakage guard ─────────────────────────────────────────────────
 # Imported from the baseline rather than retyped, so the two can never drift.
@@ -181,6 +181,21 @@ GSTIN_HEDGED = [
     "GST is {gstin} as far as I can see, but do confirm against your file.",
 ]
 
+# A reply inside a conversation that is already real. The tail is quoted
+# history: correct invoice numbers, a buyer who has already written back. It
+# carries no cue about the destination at all — the point of the scenario is
+# that there is nothing wrong with the CHANNEL, so a template that hinted
+# otherwise would be answering the question the extractor is being asked.
+QUOTED_TAIL = [
+    "> Received, thank you. I will get INV-{inv} into the Friday run.\n"
+    "> Meera",
+    "> Noted on INV-{inv}. Our approver is back Tuesday, so it goes out then.\n"
+    "> Meera",
+    "> Thanks for the copies. INV-{inv} is queued behind the month close —\n"
+    "> should clear this week.\n"
+    "> Meera",
+]
+
 AMOUNT_LINE = [
     "The amount due is Rs {amount:,.0f}.",
     "Total on this one is Rs {amount:,.0f}.",
@@ -249,7 +264,7 @@ def render_case(row: Dict[str, str], vendor: Dict[str, str]) -> RenderedCase:
         f"From: {rng.choice(['payments', 'accounts', 'billing', 'finance'])}"
         f"@{row['sender_domain']}",
         "To: accounts@clientcorp.in",
-        f"Subject: INV-{inv}",
+        f"Subject: {'Re: ' if row.get('is_reply') == 'True' else ''}INV-{inv}",
         "",
         rng.choice(GREETINGS),
         "",
@@ -277,6 +292,9 @@ def render_case(row: Dict[str, str], vendor: Dict[str, str]) -> RenderedCase:
 
     parts += ["", rng.choice(SIGNOFFS),
               f"{rng.choice(SENDER_NAMES)}", vendor["legal_name"]]
+
+    if row.get("is_reply") == "True":
+        parts += ["", rng.choice(QUOTED_TAIL).format(inv=inv)]
 
     email = "\n".join(p for p in parts if p is not None).strip()
     assert_no_leakage(email, row["case_id"])

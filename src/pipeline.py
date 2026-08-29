@@ -19,13 +19,13 @@ import csv
 import json
 import os
 from dataclasses import asdict
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Set
 
 import extractor
 import llm_client
 from extractor import ExtractionResult
 from decision_engine import (
-    decide, Decision, FAVResult, VendorRecord,
+    decide, Decision, FAVResult, VendorRecord, AccountRecord,
     ALLOW, STEP_UP, BLOCK,
 )
 import verifier
@@ -36,33 +36,90 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
 # ── Vendor master loading ─────────────────────────────────────────────
 
-def load_vendors(path: Optional[str] = None) -> Dict[str, VendorRecord]:
+def load_vendor_accounts(path):
+    """
+    vendor_accounts.csv -> {vendor_id: [AccountRecord]}, primary first.
+
+    The primary is the row flagged is_primary, and exactly one row per vendor
+    must carry it. Picking "whichever came first" instead is how a loader
+    quietly disagrees with the file it read.
+    """
+    by_vendor = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            by_vendor.setdefault(r["vendor_id"], []).append(AccountRecord(
+                account_number=r["account_number"],
+                ifsc=r["ifsc"],
+                status=r["status"],
+                added_on=r["added_on"],
+                added_via=r["added_via"],
+                verified_by=r["verified_by"],
+                verified_on=r["verified_on"],
+                settled_payout_count=int(r["settled_payout_count"] or 0),
+                last_settled_on=r["last_settled_on"],
+                is_primary=r["is_primary"] == "True",
+            ))
+    for vid, accts in by_vendor.items():
+        primaries = [a for a in accts if a.is_primary]
+        if len(primaries) != 1:
+            raise ValueError(
+                f"{vid} has {len(primaries)} primary accounts in "
+                f"{os.path.basename(path)}; exactly one is required, because "
+                f"VendorRecord.known_account_number is derived from it.")
+        accts.sort(key=lambda a: (not a.is_primary, a.added_on))
+    return by_vendor
+
+
+def load_vendors(path: Optional[str] = None,
+                 accounts_path: Optional[str] = None) -> Dict[str, VendorRecord]:
     path = path or os.path.join(DATA_DIR, "vendor_master.csv")
+    accounts_path = accounts_path or os.path.join(DATA_DIR, "vendor_accounts.csv")
+    by_vendor = load_vendor_accounts(accounts_path)
+
     vendors = {}
     with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
+            accts = by_vendor.get(row["vendor_id"], [])
+            if not accts:
+                raise ValueError(
+                    f"{row['vendor_id']} has no accounts on file. A vendor the "
+                    f"system cannot check a destination against is not a usable "
+                    f"record, and defaulting to 'no known accounts' would make "
+                    f"every payout to them look like a new account.")
+            primary = accts[0]
             vendors[row["vendor_id"]] = VendorRecord(
                 vendor_id=row["vendor_id"],
                 legal_name=row["legal_name"],
                 gstin=row["gstin"],
                 known_domain=row["known_domain"],
                 known_phone=row["known_phone"],
-                known_account_number=row["known_account_number"],
-                known_ifsc=row["known_ifsc"],
+                # Derived, never stored twice. Keeping the number in
+                # vendor_master.csv as well would let the two files disagree,
+                # and the disagreement would be silent.
+                known_account_number=primary.account_number,
+                known_ifsc=primary.ifsc,
                 avg_payout_amount=float(row["avg_payout_amount"]),
+                group_id=row.get("group_id", ""),
+                accounts=accts,
             )
     return vendors
 
 
-def build_account_index(vendors: Dict[str, VendorRecord]) -> Dict[str, str]:
+def build_account_index(vendors: Dict[str, VendorRecord]) -> Dict[str, Set[str]]:
     """
-    {account_number: vendor_id} across the whole master.
-    Enables the cross-contact reuse check without a graph database.
+    {account_number: set(vendor_ids)} across the whole master.
+
+    A SET, not a vendor id. This was `idx[acct] = v.vendor_id` in a loop, so
+    when two vendors shared an account the second silently overwrote the first
+    and a payout to that account was rejected for whichever vendor lost the
+    race — including the corporate groups decision_engine's own comment calls
+    legitimate. Overwriting also discarded the evidence: after the loop there
+    was no way to tell a shared account from an exclusive one.
     """
-    idx = {}
+    idx: Dict[str, Set[str]] = {}
     for v in vendors.values():
         for acct in v.all_known_accounts():
-            idx[acct] = v.vendor_id
+            idx.setdefault(acct, set()).add(v.vendor_id)
     return idx
 
 
@@ -79,7 +136,10 @@ def run_case(email_text: str,
              payout_id: str = "pout_TEST",
              fund_account_id: str = "fa_TEST",
              destination_account_number: Optional[str] = None,
-             controls_existing_account: Optional[bool] = None,
+             requester_controls_accounts=None,
+             request_date: Optional[str] = None,
+             requested_via: str = "email_request",
+             vendors: Optional[Dict[str, VendorRecord]] = None,
              ground_truth: Optional[str] = None) -> Dict[str, Any]:
     """
     Full pipeline for one case. Never raises.
@@ -101,11 +161,14 @@ def run_case(email_text: str,
                  other_vendor_accounts=account_index,
                  near_duplicate=near_duplicate,
                  split_below=split_below,
-                 destination_account_number=destination_account_number)
+                 destination_account_number=destination_account_number,
+                 vendors=vendors)
 
     # 3. Verification, only if the decision asked for it
     ver = verifier.verify(dec, vendor, callback_reaches_known_contact, case_id,
-                          controls_existing_account=controls_existing_account)
+                          requester_controls_accounts=requester_controls_accounts,
+                          as_of=request_date,
+                          requested_via=requested_via)
 
     final_outcome  = ver.final_outcome if ver else dec.outcome
     payout_allowed = ver.payout_allowed if ver else dec.payout_allowed
@@ -115,6 +178,7 @@ def run_case(email_text: str,
         final_outcome,
         ver.reason if ver else dec.reason,
         payout_id, fund_account_id,
+        recommended_action=dec.recommended_action,
     )
 
     # 5. Audit record
@@ -140,6 +204,8 @@ def run_case(email_text: str,
         },
 
         "decision": dec.to_dict(),
+        "verification_account": (ver.verification_account if ver else None),
+        "verification_account_basis": (ver.verification_account_basis if ver else ""),
         "verification": ver.to_dict() if ver else None,
 
         "final_outcome": final_outcome,
@@ -252,14 +318,14 @@ def demo():
     # here would claim the semantic layer worked when it never ran at all.
     if not llm_client.get_api_key():
         print()
-        print("GROQ_API_KEY is not set — the semantic layer cannot run.")
+        print("No API key set — the semantic layer cannot run.")
         print()
         print("This demo deliberately refuses to print a verdict without it.")
         print("A payout held because extraction failed is not a detection, and")
         print("presenting it as one would misrepresent what PayeeProof does.")
         print()
-        print('  PowerShell:  $env:GROQ_API_KEY="gsk_..."')
-        print("  cmd:         set GROQ_API_KEY=gsk_...")
+        print('  PowerShell:  $env:PAYEEPROOF_API_KEY="sk-or-..."')
+        print("  An existing GROQ_API_KEY is still read, so nothing breaks.")
         print()
         print("Free key, no credit card: console.groq.com")
         print()

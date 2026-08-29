@@ -128,7 +128,8 @@ def trace(case_id, row, vendor, rendered, extraction):
     d = decide(ext, fav, vendor, other_vendor_accounts=index,
                near_duplicate=row["near_duplicate_invoice"] == "True",
                split_below=row["split_below_threshold"] == "True",
-               destination_account_number=row["proposed_account_number"])
+               destination_account_number=row["proposed_account_number"],
+               vendors=vendors)
 
     for tier, label in ((d.tier1, "TIER 1 — identity, against the vendor master"),
                         (d.tier2, "TIER 2 — context, never decisive alone")):
@@ -161,16 +162,22 @@ def trace(case_id, row, vendor, rendered, extraction):
 
     # ── 6 ────────────────────────────────────────────────────────────
     step(6, "Verification — two channels, if the decision asked for it", "det")
+    controls = [a for a in
+                (row.get("requester_controls_accounts") or "").split(";") if a]
     ver = verifier.verify(d, vendor, row["callback_reaches_known_contact"] == "True",
                           case_id,
-                          controls_existing_account=row["controls_existing_account"] == "True")
+                          requester_controls_accounts=controls,
+                          as_of=row.get("request_date") or None)
     if ver is None:
         print("  Not reached — only a hold routes here.")
     else:
         print(f"    channel 1  callback to {vendor.known_phone} (vendor master) "
               f"-> {row['callback_reaches_known_contact']}")
-        print(f"    channel 2  penny drop from {vendor.known_account_number} "
-              f"-> {row['controls_existing_account']}")
+        print("  The system NAMES the account the penny drop must come from. The")
+        print("  requester never chooses — that is the whole of the control.")
+        print(f"    channel 2  demanded from {ver.verification_account or 'NOTHING QUALIFIES'}")
+        print(f"               {ver.verification_account_basis}")
+        print(f"               requester can send from: {controls or 'nothing'}")
         print()
         print(f"  {ver.outcome}  ->  {ver.final_outcome}")
         print(f"  {ver.reason[:200]}")
@@ -181,7 +188,8 @@ def trace(case_id, row, vendor, rendered, extraction):
     # ── 7 ────────────────────────────────────────────────────────────
     step(7, "What it maps to at RazorpayX", "det")
     for a in verifier.razorpay_actions(final, (ver.reason if ver else d.reason),
-                                       f"pout_{case_id}", f"fa_{case_id}"):
+                                       f"pout_{case_id}", f"fa_{case_id}",
+                                       recommended_action=d.recommended_action):
         if a["method"]:
             extra = "   [needs human confirmation]" if a.get("requires_human_confirmation") else ""
             print(f"    {a['method']:6s} {a['endpoint']}{extra}")

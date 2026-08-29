@@ -1,8 +1,9 @@
 """
 PayeeProof — synthetic data generator.
 
-Three outputs:
+Four outputs:
   vendor_master.csv    — the "trusted source" every request gets checked against
+  vendor_accounts.csv  — the accounts on file for each vendor, with provenance
   cases_dev.csv        — 70% of cases, for tuning thresholds/rules
   cases_holdout.csv    — 30% of cases, scored exactly once at the end
 
@@ -21,19 +22,54 @@ legit_rebrand should produce false BLOCKs under the present R4, and
 fraud_sim_swap defeats the callback entirely. If a scenario only ever confirms
 that the rules work, it is not earning its place in the file.
 
-THE SECOND VERIFICATION CHANNEL
-------------------------------
-`controls_existing_account` records whether the requester can still move money
-OUT of the account already on file — what a Reverse Penny Drop pointed at the
-OLD account would establish.
+ONE ACCOUNT PER VENDOR WAS A LIE, AND IT COST TWO REAL BEHAVIOURS
+-----------------------------------------------------------------
+Until v2 every vendor had exactly one account. Two consequences, both in
+vendor_accounts.csv's reason for existing:
 
-It is deliberately NOT a copy of the label. Attackers never have it: taking over
-a mailbox, or even a phone, does not give you the victim's bank account, and
-redirecting money away from that account is the entire point of the attack. But
-legitimate vendors do not always have it either — a real bank switch may mean
-the old facility is already closed. Those cases exist in the data on purpose,
-because a channel that only ever appears in cases it resolves has not been
-tested against anything.
+  - A corporate group sharing a bank account was REJECTED, because the account
+    index was a dict and the second vendor silently overwrote the first.
+  - A vendor with a genuine second account was HELD on every payout to it,
+    forever, because the master recorded only one.
+
+So accounts now live in their own table with their own provenance. added_via
+records which channel asked for the account, verified_by records what evidence
+confirmed it, and settled_payout_count records whether money has ever actually
+arrived there. Being listed proves nothing; those three columns are what makes
+an account usable as a trust anchor.
+
+THE SECOND VERIFICATION CHANNEL — AND WHY THE OLD COLUMN HAD TO GO
+-------------------------------------------------------------------
+v1 carried `controls_existing_account`: one bool meaning "a Reverse Penny Drop
+from the account on file would succeed". With several accounts on file, "the
+account on file" is not a thing — and worse, that column ANSWERED THE QUESTION
+THE POLICY IS SUPPOSED TO DECIDE. Which account the system demands proof from is
+the entire control; encoding the outcome in the data made it unmeasurable.
+
+Replaced by `requester_controls_accounts`: the accounts this requester can
+actually send money out of. A description of the world. The verifier NAMES an
+account by policy and the evaluator checks whether that named account is in this
+list, so a policy that names badly now shows up as a failure.
+
+It is deliberately NOT a copy of the label, in both directions:
+  - legitimate vendors do not always control their old account — a real bank
+    switch may mean the old facility is already closed;
+  - and one attacker DOES control an account on file. fraud_planted_account is
+    the case where they got an account onto the master earlier and now use it to
+    satisfy the second channel: a previous success used as the credential for
+    the next one.
+
+DATES ARE FROZEN, DELIBERATELY
+------------------------------
+Account seasoning is a comparison against a date, and the naive version —
+`(today - added_on).days` — makes the dataset AGE: a case that holds today
+releases in six months, and nothing in the diff explains it. So AS_OF is a fixed
+date, every case carries its own request_date, and every account age is measured
+against the CASE's date. The corpus reproduces identically in 2030.
+
+Account ages are written as clearly-recent or clearly-seasoned rather than
+placed relative to the policy's threshold, so SEASONING_DAYS can be tuned
+without regenerating anything.
 
 WITHIN-SCENARIO VARIANCE
 ------------------------
@@ -49,8 +85,23 @@ import csv
 import hashlib
 import os
 import random
+from datetime import date, timedelta
 
-random.seed(42)  # reproducible dataset
+# v2. A new seed, because v1's holdout has been seen and what it showed shaped
+# v2's design — the inactive fix and the no-reject decision both came from
+# reading it. A new seed does not un-see that; what it buys is that the parts of
+# v2 which matter most are tested on ground nothing has been tuned against.
+SEED = 20260829
+random.seed(SEED)
+
+# The corpus's frozen "now". Nothing here reads the system clock.
+AS_OF = date(2026, 6, 30)
+
+# Account ages, written as intent rather than as a threshold. RECENT is what a
+# planted account looks like; SEASONED is what a real one does. The policy's
+# SEASONING_DAYS sits between them and can move without a regeneration.
+RECENT_DAYS   = (5, 45)
+SEASONED_DAYS = (200, 1100)
 
 # ---------------------------------------------------------------------------
 # Reference pools for realistic-looking synthetic values
@@ -136,6 +187,15 @@ def _slightly_altered_gstin(gstin):
     return "".join(chars)
 
 
+def _days_before(anchor: date, span) -> date:
+    lo, hi = span
+    return anchor - timedelta(days=random.randint(lo, hi))
+
+
+def _iso(d):
+    return d.isoformat() if d else ""
+
+
 def _stable_bool(case_id: str, field: str, probability: float) -> bool:
     """
     A per-case coin flip that does NOT consume the global RNG stream.
@@ -174,6 +234,14 @@ def _fav(active_p=0.94, available_p=0.93):
 # ---------------------------------------------------------------------------
 
 def generate_vendor_master(n=75):
+    """
+    The vendor record itself. Accounts moved to vendor_accounts.csv — keeping
+    known_account_number here as well would let the two diverge, and the
+    divergence would be silent: the loader reads one, the eval prints the other.
+
+    group_id is DECLARED by the merchant, never inferred from a shared account,
+    because a shared account is the thing being judged. Most vendors have none.
+    """
     vendors = []
     for i in range(n):
         city = random.choice(list(CITY_STATE_CODE.keys()))
@@ -184,32 +252,232 @@ def generate_vendor_master(n=75):
             "legal_name": legal_name,
             "gstin": gstin,
             "pan": _pan_from_gstin(gstin),
-            "known_domain": _domain(legal_name),
+            "known_domain": "",          # filled below, uniquely
             "known_phone": _phone(),
-            "known_account_number": _account_number(),
-            "known_ifsc": _ifsc(),
             "city": city,
             "avg_payout_amount": random.choice([15000, 28000, 45000, 82000, 150000, 310000]),
+            "group_id": "",
         })
+
+    # Domains must be UNIQUE. Legal names are drawn from a small pool, so
+    # _domain() collided for 57 of 120 vendors — and a domain shared by two
+    # unrelated vendors makes the sender an ambiguous identifier, which quietly
+    # turns triage's vendor resolution into a coin flip. Disambiguate with the
+    # city, then with a counter.
+    taken = set()
+    for v in vendors:
+        base = _domain(v["legal_name"])
+        cand = base
+        if cand in taken:
+            cand = _domain(f"{v['legal_name']} {v['city']}")
+        n = 2
+        while cand in taken:
+            cand = base.replace(".com", f"{n}.com")
+            n += 1
+        taken.add(cand)
+        v["known_domain"] = cand
+
+    # Corporate groups: a minority of the master, declared explicitly. Members
+    # are drawn as contiguous blocks only for readability of the CSV; nothing
+    # reads the ordering.
+    pool = [v for v in vendors]
+    random.shuffle(pool)
+    cursor = 0
+    for g in range(max(1, n // 6)):
+        size = random.choice([2, 2, 3])
+        members = pool[cursor:cursor + size]
+        cursor += size
+        if len(members) < 2:
+            break
+        for v in members:
+            v["group_id"] = f"GRP{g:03d}"
     return vendors
+
+
+def generate_vendor_accounts(vendors):
+    """
+    The accounts on file, with the provenance that makes them usable — or not —
+    as a trust anchor.
+
+      added_via     which channel ASKED for this account. An account added by an
+                    email request cannot verify another email request, so this
+                    is what breaks the circularity in the second channel.
+      verified_by   what evidence CONFIRMED it. An account that entered the
+                    master unverified is worthless as an anchor: the destination
+                    would be checked against a record an attacker could write.
+      settled_*     whether money has ever actually arrived. Being listed is not
+                    evidence of anything.
+
+    Distribution: every vendor has one onboarding account; about a quarter have
+    a second; a few have a third. Roughly half the declared groups genuinely
+    share one account across their members — the case that is rejected today.
+    """
+    accounts = []
+    by_group = {}
+    for v in vendors:
+        if v["group_id"]:
+            by_group.setdefault(v["group_id"], []).append(v)
+
+    # Groups that genuinely share a facility across members.
+    shared = {}
+    for gid, members in by_group.items():
+        if random.random() < 0.6:
+            shared[gid] = {"account_number": _account_number(), "ifsc": _ifsc()}
+
+    for v in vendors:
+        # About one vendor in twelve is brand new: onboarded recently, never
+        # paid. Nothing exists to compare a request against, which is a real
+        # state and the one fraud_first_contact exploits.
+        brand_new = random.random() < 0.08
+        opened = (_days_before(AS_OF, (10, 70)) if brand_new
+                  else _days_before(AS_OF, (400, 1600)))
+        accounts.append({
+            "vendor_id": v["vendor_id"],
+            "account_number": _account_number(),
+            "ifsc": _ifsc(),
+            "status": "active",
+            "added_on": _iso(opened),
+            "added_via": "onboarding",
+            "verified_by": "onboarding_kyc",
+            "verified_on": _iso(opened),
+            "settled_payout_count": 0 if brand_new else random.randint(6, 90),
+            "last_settled_on": "" if brand_new else _iso(_days_before(AS_OF, (3, 45))),
+            "is_primary": True,
+        })
+        if brand_new:
+            continue          # no second facility before the first payment
+
+        # A second, genuinely theirs: a division, a collections facility, a
+        # bank the treasury moved part of the business to.
+        if random.random() < 0.26:
+            added = _days_before(AS_OF, SEASONED_DAYS)
+            settled = random.randint(1, 20)
+            accounts.append({
+                "vendor_id": v["vendor_id"],
+                "account_number": _account_number(),
+                "ifsc": _ifsc(),
+                "status": "active",
+                "added_on": _iso(added),
+                "added_via": random.choice(["portal", "email_request", "phone_request"]),
+                "verified_by": random.choice(["penny_drop", "callback"]),
+                "verified_on": _iso(added + timedelta(days=random.randint(0, 4))),
+                "settled_payout_count": settled,
+                "last_settled_on": _iso(_days_before(AS_OF, (10, 200))),
+                "is_primary": False,
+            })
+
+            if random.random() < 0.30:
+                added3 = _days_before(AS_OF, SEASONED_DAYS)
+                accounts.append({
+                    "vendor_id": v["vendor_id"],
+                    "account_number": _account_number(),
+                    "ifsc": _ifsc(),
+                    "status": random.choice(["active", "active", "dormant"]),
+                    "added_on": _iso(added3),
+                    "added_via": "portal",
+                    "verified_by": "penny_drop",
+                    "verified_on": _iso(added3),
+                    "settled_payout_count": random.randint(0, 6),
+                    "last_settled_on": _iso(_days_before(AS_OF, (60, 400))),
+                    "is_primary": False,
+                })
+
+        # The shared group facility, listed under every member. Legitimate, and
+        # indistinguishable from the mule pattern without group_id — which is
+        # precisely why the code rejects it today.
+        gid = v["group_id"]
+        if gid in shared:
+            added = _days_before(AS_OF, SEASONED_DAYS)
+            accounts.append({
+                "vendor_id": v["vendor_id"],
+                "account_number": shared[gid]["account_number"],
+                "ifsc": shared[gid]["ifsc"],
+                "status": "active",
+                "added_on": _iso(added),
+                "added_via": "portal",
+                "verified_by": "onboarding_kyc",
+                "verified_on": _iso(added),
+                "settled_payout_count": random.randint(2, 30),
+                "last_settled_on": _iso(_days_before(AS_OF, (5, 90))),
+                "is_primary": False,
+            })
+
+    return accounts, shared
 
 
 # ---------------------------------------------------------------------------
 # Scenario narratives — label comes from the story, features follow from it
 # ---------------------------------------------------------------------------
 
-def _base(vendor, case_id, scenario_type, label):
+def _accounts_of(vendor, ctx):
+    return ctx["by_vendor"].get(vendor["vendor_id"], [])
+
+
+def _primary_of(vendor, ctx):
+    for a in _accounts_of(vendor, ctx):
+        if a["is_primary"]:
+            return a
+    return _accounts_of(vendor, ctx)[0]
+
+
+def _controls_all(vendor, ctx):
+    """
+    Every account this vendor can send money out of — the legitimate case.
+
+    Planted accounts are excluded. An account an attacker got onto the master
+    is on file for this vendor and is NOT controlled by them; including it here
+    would hand the legitimate requester a credential belonging to the attacker
+    and quietly destroy the scenario it was planted for.
+    """
+    return ";".join(a["account_number"] for a in _accounts_of(vendor, ctx)
+                    if a["status"] == "active"
+                    and a["account_number"] not in ctx["planted"])
+
+
+def _add_account(ctx, vendor, case_id, **overrides):
+    """
+    An account that entered the master because of an earlier request, rather
+    than at onboarding. The point of modelling this at all: v1 modelled the
+    REQUEST to add an account and never the RESULTING STATE, so ADD versus
+    REPLACE could not be tested end to end — the distinction R4's design rests
+    on — and the planted-account attack had nowhere to live.
+    """
+    row = {
+        "vendor_id": vendor["vendor_id"],
+        "account_number": _account_number(),
+        "ifsc": _ifsc(),
+        "status": "active",
+        "added_on": "",
+        "added_via": "email_request",
+        "verified_by": "unverified",
+        "verified_on": "",
+        "settled_payout_count": 0,
+        "last_settled_on": "",
+        "is_primary": False,
+    }
+    row.update(overrides)
+    ctx["accounts"].append(row)
+    ctx["by_vendor"].setdefault(vendor["vendor_id"], []).append(row)
+    return row
+
+
+def _base(vendor, case_id, scenario_type, label, ctx):
     """Fields every scenario shares; each story then overrides what it changes."""
     status, name_ok = _fav()
+    primary = _primary_of(vendor, ctx)
     return {
         "case_id": case_id, "vendor_id": vendor["vendor_id"], "label": label,
         "scenario_type": scenario_type,
+        # The case's own "now". Every age in this corpus is measured against
+        # this date and never against the system clock, so the dataset does not
+        # change its answers as it gets older.
+        "request_date": _iso(_days_before(AS_OF, (0, 150))),
         "action_type": "REPLACE",
         "sender_domain": vendor["known_domain"],
         "sender_phone_used": vendor["known_phone"],
         "proposed_gstin": vendor["gstin"],
-        "proposed_account_number": vendor["known_account_number"],
-        "proposed_ifsc": vendor["known_ifsc"],
+        "proposed_account_number": primary["account_number"],
+        "proposed_ifsc": primary["ifsc"],
         "registered_name_returned": vendor["legal_name"],
         "name_match_score": 100,
         "fav_account_status": status,
@@ -221,11 +489,14 @@ def _base(vendor, case_id, scenario_type, label):
         "near_duplicate_invoice": False,
         "split_below_threshold": False,
         "callback_reaches_known_contact": True,
-        # Can the requester still move money OUT of the account already on
-        # file? Reverse Penny Drop pointed at the OLD account asks exactly
-        # that. It is the one thing a mail-and-phone attacker cannot do —
-        # redirecting away from that account is the whole point of the attack.
-        "controls_existing_account": True,
+        # Which accounts can the requester actually move money OUT of? A Reverse
+        # Penny Drop asks exactly that, of ONE named account. This is a
+        # description of the world; which account gets named is the policy's
+        # job, and keeping the two apart is what makes the policy measurable.
+        "requester_controls_accounts": _controls_all(vendor, ctx),
+        # For V2.3. Nothing reads these yet.
+        "thread_id": f"THR{case_id[-5:]}",
+        "is_reply": False,
     }
 
 
@@ -235,7 +506,7 @@ def scenario_fraud_easy(vendor, case_id, ctx):
     """Attacker compromises vendor's email, uses a lookalike domain, sends an
     invoice with a materially altered GSTIN and a brand-new account under a name
     that doesn't match the vendor master at all. The loud, unsubtle version."""
-    c = _base(vendor, case_id, "fraud_easy", "fraud")
+    c = _base(vendor, case_id, "fraud_easy", "fraud", ctx)
     c.update({
         "sender_domain": _lookalike_domain(vendor["known_domain"]),
         "sender_phone_used": _phone(),
@@ -249,7 +520,7 @@ def scenario_fraud_easy(vendor, case_id, ctx):
         "channel_manipulation": random.random() < 0.55,
         "amount": _amount_near(vendor["avg_payout_amount"], 0.20),
         "callback_reaches_known_contact": False,
-        "controls_existing_account": False,
+        "requester_controls_accounts": "",
     })
     return c
 
@@ -259,7 +530,7 @@ def scenario_fraud_hard(vendor, case_id, ctx):
     real vendor name registered on an account they control. Amount split just
     under a plausible approval threshold. Only the destination and a faint
     urgency cue give it away."""
-    c = _base(vendor, case_id, "fraud_hard", "fraud")
+    c = _base(vendor, case_id, "fraud_hard", "fraud", ctx)
     c.update({
         "sender_domain": _lookalike_domain(vendor["known_domain"]),
         "sender_phone_used": _phone(),
@@ -273,7 +544,7 @@ def scenario_fraud_hard(vendor, case_id, ctx):
         "near_duplicate_invoice": random.random() < 0.70,
         "split_below_threshold": random.random() < 0.70,
         "callback_reaches_known_contact": False,
-        "controls_existing_account": False,
+        "requester_controls_accounts": "",
     })
     return c
 
@@ -288,7 +559,7 @@ def scenario_fraud_compromised(vendor, case_id, ctx):
     dataset had no representation of it: every fraud case carried a lookalike
     domain, so a rule keyed on domain mismatch looked far better than it is.
     """
-    c = _base(vendor, case_id, "fraud_compromised", "fraud")
+    c = _base(vendor, case_id, "fraud_compromised", "fraud", ctx)
     c.update({
         "proposed_account_number": _account_number(),
         "proposed_ifsc": _ifsc(),
@@ -298,7 +569,7 @@ def scenario_fraud_compromised(vendor, case_id, ctx):
         "channel_manipulation": random.random() < 0.40,
         "amount": _amount_near(vendor["avg_payout_amount"], 0.08),
         "callback_reaches_known_contact": False,
-        "controls_existing_account": False,
+        "requester_controls_accounts": "",
     })
     return c
 
@@ -312,9 +583,13 @@ def scenario_fraud_mule(vendor, case_id, ctx):
     corporate groups — and is also exactly how one attacker redirects several
     vendors to one destination. The cross-contact FAIL branch had zero coverage.
     """
-    c = _base(vendor, case_id, "fraud_mule", "fraud")
-    others = [v for v in ctx["vendors"] if v["vendor_id"] != vendor["vendor_id"]]
-    mule = random.choice(others)["known_account_number"]
+    c = _base(vendor, case_id, "fraud_mule", "fraud", ctx)
+    # Not a group sibling: an account shared inside a declared group is
+    # legitimate, and drawing the mule from one would mislabel it as fraud.
+    others = [v for v in ctx["vendors"]
+              if v["vendor_id"] != vendor["vendor_id"]
+              and not (vendor["group_id"] and v["group_id"] == vendor["group_id"])]
+    mule = _primary_of(random.choice(others), ctx)["account_number"]
     c.update({
         "sender_domain": _lookalike_domain(vendor["known_domain"]),
         "sender_phone_used": _phone(),
@@ -325,7 +600,7 @@ def scenario_fraud_mule(vendor, case_id, ctx):
         "channel_manipulation": random.random() < 0.45,
         "amount": _amount_near(vendor["avg_payout_amount"], 0.15),
         "callback_reaches_known_contact": False,
-        "controls_existing_account": False,
+        "requester_controls_accounts": "",
     })
     return c
 
@@ -341,7 +616,7 @@ def scenario_fraud_sim_swap(vendor, case_id, ctx):
     callback_reaches_known_contact correlates perfectly with the label and a
     pipeline running no rules scores 100%.
     """
-    c = _base(vendor, case_id, "fraud_sim_swap", "fraud")
+    c = _base(vendor, case_id, "fraud_sim_swap", "fraud", ctx)
     c.update({
         "sender_domain": _lookalike_domain(vendor["known_domain"]),
         "proposed_account_number": _account_number(),
@@ -353,7 +628,7 @@ def scenario_fraud_sim_swap(vendor, case_id, ctx):
         "callback_reaches_known_contact": True,   # the callback is defeated
         # ...but the attacker still cannot send from the vendor's own account.
         # This is the scenario the second channel exists for.
-        "controls_existing_account": False,
+        "requester_controls_accounts": "",
     })
     return c
 
@@ -362,7 +637,7 @@ def scenario_fraud_sim_swap(vendor, case_id, ctx):
 
 def scenario_legit_easy(vendor, case_id, ctx):
     """Routine payout to a long-standing, unchanged account. Nothing should trip."""
-    c = _base(vendor, case_id, "legit_easy", "legit")
+    c = _base(vendor, case_id, "legit_easy", "legit", ctx)
     c.update({
         "action_type": "NONE",
         "amount": _amount_near(vendor["avg_payout_amount"], 0.06),
@@ -380,11 +655,13 @@ def scenario_legit_hard(vendor, case_id, ctx):
     second channel and it must be represented, not assumed away: a control whose
     dataset only contains cases it handles is not being tested.
     """
-    c = _base(vendor, case_id, "legit_hard", "legit")
+    c = _base(vendor, case_id, "legit_hard", "legit", ctx)
     c.update({
         "proposed_account_number": _account_number(),
         "proposed_ifsc": _ifsc(),
-        "controls_existing_account": _stable_bool(case_id, "rpd", 0.75),
+        # A genuine switch sometimes means the old facility is already closed.
+        "requester_controls_accounts": (_controls_all(vendor, ctx)
+                                        if _stable_bool(case_id, "rpd", 0.75) else ""),
         "urgency_language": random.random() < 0.85,
         "hedged_gstin": random.random() < 0.25,
         "amount": _amount_near(vendor["avg_payout_amount"], 0.10),
@@ -402,12 +679,13 @@ def scenario_legit_rebrand(vendor, case_id, ctx):
     is completely genuine. Included precisely because the current R4 is expected
     to reject it.
     """
-    c = _base(vendor, case_id, "legit_rebrand", "legit")
+    c = _base(vendor, case_id, "legit_rebrand", "legit", ctx)
     c.update({
         "sender_domain": _rebranded_domain(vendor["known_domain"]),
         # An acquisition often consolidates banking, so the old facility may
         # already be gone.
-        "controls_existing_account": _stable_bool(case_id, "rpd", 0.65),
+        "requester_controls_accounts": (_controls_all(vendor, ctx)
+                                        if _stable_bool(case_id, "rpd", 0.65) else ""),
         "proposed_account_number": _account_number(),
         "proposed_ifsc": _ifsc(),
         "urgency_language": random.random() < 0.75,
@@ -428,7 +706,7 @@ def scenario_legit_add_account(vendor, case_id, ctx):
     ADD is materially lower risk than REPLACE — but no scenario exercised ADD,
     so that distinction was asserted and never measured.
     """
-    c = _base(vendor, case_id, "legit_add_account", "legit")
+    c = _base(vendor, case_id, "legit_add_account", "legit", ctx)
     c.update({
         "action_type": "ADD",
         "proposed_account_number": _account_number(),
@@ -449,7 +727,7 @@ def scenario_legit_unreachable(vendor, case_id, ctx):
     make the distinction between "held" and "blocked" measurable, since only one
     of those is a customer-facing failure.
     """
-    c = _base(vendor, case_id, "legit_unreachable", "legit")
+    c = _base(vendor, case_id, "legit_unreachable", "legit", ctx)
     c.update({
         "proposed_account_number": _account_number(),
         "proposed_ifsc": _ifsc(),
@@ -458,8 +736,177 @@ def scenario_legit_unreachable(vendor, case_id, ctx):
         "callback_reaches_known_contact": False,
         # Nobody answers the phone, but the vendor still banks where they always
         # have. This is the scenario the second channel should RESCUE: a genuine
-        # request currently held for want of a phone call.
-        "controls_existing_account": True,
+        # request currently held for want of a phone call. Inherited from _base.
+    })
+    return c
+
+
+# ── New in v2 ─────────────────────────────────────────────────────────
+
+def scenario_legit_group_shared_account(vendor, case_id, ctx):
+    """
+    Two companies in one declared corporate group settle into a single treasury
+    facility. Routine payout, nothing is being changed, and the destination is
+    an account that is also on file under a sibling vendor.
+
+    THIS IS REJECTED BY v1, in three lines: build_account_index() assigns
+    account -> vendor in a loop, so the sibling silently overwrites, and the
+    payout then fires R2c_followup_destination_conflict. decision_engine's own
+    comment says sharing an account across contacts is legitimate for corporate
+    groups; the code rejected it anyway. The scenario exists to hold that fixed.
+    """
+    c = _base(vendor, case_id, "legit_group_shared_account", "legit", ctx)
+    shared = ctx["shared"][vendor["group_id"]]
+    c.update({
+        "action_type": "NONE",
+        "proposed_account_number": shared["account_number"],
+        "proposed_ifsc": shared["ifsc"],
+        "amount": _amount_near(vendor["avg_payout_amount"], 0.08),
+    })
+    return c
+
+
+def scenario_legit_second_account(vendor, case_id, ctx):
+    """
+    A vendor with more than one facility of their own — a division, a
+    collections account — being paid into the one that is not primary. Nothing
+    is being requested; this is just where this invoice settles.
+
+    Under v1 this produced account_continuity WARN on EVERY payout to that
+    account, forever, because the master recorded one account per vendor. A
+    permanent false-hold generator, and invisible while the data agreed with
+    the bug.
+    """
+    c = _base(vendor, case_id, "legit_second_account", "legit", ctx)
+    others = [a for a in _accounts_of(vendor, ctx)
+              if not a["is_primary"] and a["status"] == "active"
+              and a["verified_by"] != "unverified"
+              and a["account_number"] not in ctx["planted"]]
+    acct = random.choice(others)
+    c.update({
+        "action_type": "NONE",
+        "proposed_account_number": acct["account_number"],
+        "proposed_ifsc": acct["ifsc"],
+        "amount": _amount_near(vendor["avg_payout_amount"], 0.10),
+    })
+    return c
+
+
+def scenario_legit_added_then_paid(vendor, case_id, ctx):
+    """
+    The state v1 could not represent. The vendor asked to add an account some
+    time ago, the request was verified and accepted, the account went onto the
+    master — and now an invoice settles into it.
+
+    v1 modelled the REQUEST (legit_add_account) and never the RESULTING STATE,
+    so a payout to an added account stayed "new" indefinitely and ADD versus
+    REPLACE could not be tested end to end. That distinction is what R4's design
+    rests on.
+    """
+    c = _base(vendor, case_id, "legit_added_then_paid", "legit", ctx)
+    added = _days_before(AS_OF, SEASONED_DAYS)
+    acct = _add_account(ctx, vendor, case_id,
+                        added_on=_iso(added),
+                        added_via="email_request",
+                        verified_by="callback",
+                        verified_on=_iso(added + timedelta(days=1)),
+                        settled_payout_count=random.randint(1, 12),
+                        last_settled_on=_iso(_days_before(AS_OF, (20, 180))))
+    c.update({
+        "action_type": "NONE",
+        "proposed_account_number": acct["account_number"],
+        "proposed_ifsc": acct["ifsc"],
+        "amount": _amount_near(vendor["avg_payout_amount"], 0.12),
+    })
+    return c
+
+
+def scenario_fraud_planted_account(vendor, case_id, ctx):
+    """
+    THE ATTACK THE SECOND CHANNEL IS BLIND TO, and the only case in this corpus
+    where an attacker controls an account already on file.
+
+    Earlier, the attacker got account B added to the vendor master — a
+    compromised mailbox and a plausible "we have opened a second facility"
+    request, which is exactly the legit_add_account narrative. It went on
+    unverified. Now they ask for the destination to move to account C.
+
+    Ask "prove you control an account on file" and the attacker penny-drops from
+    B. The strongest control in the system confirms the fraud, because they used
+    a PREVIOUS SUCCESS as the credential for the next one.
+
+    B is written to look like what it is: added by an email request, never
+    verified, recent, and never paid. Any policy that names the account to drop
+    from — rather than letting the requester choose — refuses it on all four.
+    """
+    c = _base(vendor, case_id, "fraud_planted_account", "fraud", ctx)
+    planted = _add_account(ctx, vendor, case_id,
+                           added_on=_iso(_days_before(AS_OF, RECENT_DAYS)),
+                           added_via="email_request",
+                           verified_by="unverified",
+                           settled_payout_count=0)
+    ctx["planted"].add(planted["account_number"])
+    c.update({
+        "proposed_account_number": _account_number(),
+        "proposed_ifsc": _ifsc(),
+        "name_match_score": random.randint(82, 100),
+        "urgency_language": random.random() < 0.45,
+        "channel_manipulation": random.random() < 0.40,
+        "amount": _amount_near(vendor["avg_payout_amount"], 0.10),
+        "callback_reaches_known_contact": False,
+        # The whole point: they DO control an account on file.
+        "requester_controls_accounts": planted["account_number"],
+    })
+    return c
+
+
+def scenario_fraud_first_contact(vendor, case_id, ctx):
+    """
+    A supplier the buyer has onboarded but never actually paid, impersonated on
+    what would be the first invoice. There is no payment history to compare
+    against and no seasoned account to demand proof from.
+
+    Holding is the correct outcome and the honest one: nothing exists to check.
+    The scenario is here so that "we could not check" is measured rather than
+    assumed, and so the second channel's unavailable state has real cases.
+    """
+    c = _base(vendor, case_id, "fraud_first_contact", "fraud", ctx)
+    c.update({
+        "sender_domain": _lookalike_domain(vendor["known_domain"]),
+        "sender_phone_used": _phone(),
+        "proposed_account_number": _account_number(),
+        "proposed_ifsc": _ifsc(),
+        "name_match_score": random.randint(60, 95),
+        "urgency_language": random.random() < 0.55,
+        "channel_manipulation": random.random() < 0.35,
+        "amount": _amount_near(vendor["avg_payout_amount"], 0.25),
+        "callback_reaches_known_contact": False,
+        "requester_controls_accounts": "",
+    })
+    return c
+
+
+def scenario_fraud_thread_hijack(vendor, case_id, ctx):
+    """
+    The attacker is inside a conversation that is already real: same thread,
+    same participants, correct invoice numbers, replying from the vendor's own
+    mailbox. Nothing about the channel is wrong and there is no new sender to
+    notice.
+
+    Here for V2.3 — thread depth and first-contact history are inbox signals,
+    and nothing in v2's rule table reads them yet. Recorded rather than claimed.
+    """
+    c = _base(vendor, case_id, "fraud_thread_hijack", "fraud", ctx)
+    c.update({
+        "proposed_account_number": _account_number(),
+        "proposed_ifsc": _ifsc(),
+        "name_match_score": random.randint(85, 100),
+        "urgency_language": random.random() < 0.25,
+        "channel_manipulation": random.random() < 0.20,
+        "amount": _amount_near(vendor["avg_payout_amount"], 0.07),
+        "callback_reaches_known_contact": False,
+        "requester_controls_accounts": "",
+        "is_reply": True,
     })
     return c
 
@@ -475,6 +922,21 @@ SCENARIO_FUNCS = {
     "legit_rebrand": scenario_legit_rebrand,
     "legit_add_account": scenario_legit_add_account,
     "legit_unreachable": scenario_legit_unreachable,
+    "fraud_planted_account": scenario_fraud_planted_account,
+    "fraud_first_contact": scenario_fraud_first_contact,
+    "fraud_thread_hijack": scenario_fraud_thread_hijack,
+    "legit_group_shared_account": scenario_legit_group_shared_account,
+    "legit_second_account": scenario_legit_second_account,
+    "legit_added_then_paid": scenario_legit_added_then_paid,
+}
+
+# Scenarios that need the vendor to be in a particular state. Drawing the
+# vendor at random and hoping would silently produce a handful of cases and a
+# misleading per-scenario n.
+VENDOR_POOL = {
+    "legit_group_shared_account": "shared_group",
+    "legit_second_account": "multi_account",
+    "fraud_first_contact": "new_vendor",
 }
 
 # Fraud is oversampled relative to real-world base rates, for statistical power.
@@ -483,29 +945,73 @@ SCENARIO_FUNCS = {
 # adversarial scenarios are weighted UP precisely because they are where the
 # rules are expected to struggle.
 SCENARIO_WEIGHTS = {
-    "fraud_easy":         0.09,
-    "fraud_hard":         0.12,
-    "fraud_compromised":  0.11,
-    "fraud_mule":         0.06,
-    "fraud_sim_swap":     0.06,
-    "legit_easy":         0.20,
-    "legit_hard":         0.14,
-    "legit_rebrand":      0.10,
-    "legit_add_account":  0.07,
-    "legit_unreachable":  0.05,
+    "fraud_easy":                 0.07,
+    "fraud_hard":                 0.10,
+    "fraud_compromised":          0.09,
+    "fraud_mule":                 0.05,
+    "fraud_sim_swap":             0.05,
+    "fraud_planted_account":      0.05,
+    "fraud_first_contact":        0.04,
+    "fraud_thread_hijack":        0.04,
+    "legit_easy":                 0.12,
+    "legit_hard":                 0.11,
+    "legit_rebrand":              0.08,
+    "legit_add_account":          0.05,
+    "legit_unreachable":          0.04,
+    "legit_group_shared_account": 0.04,
+    "legit_second_account":       0.04,
+    "legit_added_then_paid":      0.03,
 }
 
 
-def generate_cases(vendors, n=400):
+def _build_context(vendors, accounts, shared):
+    by_vendor = {}
+    for a in accounts:
+        by_vendor.setdefault(a["vendor_id"], []).append(a)
+
+    by_id = {v["vendor_id"]: v for v in vendors}
+
+    def has_extra(v):
+        return sum(1 for a in by_vendor.get(v["vendor_id"], [])
+                   if not a["is_primary"] and a["status"] == "active") >= 1
+
+    def is_new(v):
+        return all(int(a["settled_payout_count"]) == 0
+                   for a in by_vendor.get(v["vendor_id"], []))
+
+    return {
+        "vendors": vendors,
+        "by_id": by_id,
+        "accounts": accounts,          # appended to by the scenarios themselves
+        "by_vendor": by_vendor,
+        "shared": shared,
+        "planted": set(),
+        "pools": {
+            "shared_group": [v for v in vendors if v["group_id"] in shared],
+            "multi_account": [v for v in vendors if has_extra(v)],
+            "new_vendor": [v for v in vendors if is_new(v)],
+        },
+    }
+
+
+def generate_cases(vendors, accounts, shared, n=400):
     types = list(SCENARIO_WEIGHTS.keys())
     weights = list(SCENARIO_WEIGHTS.values())
-    ctx = {"vendors": vendors}
+    ctx = _build_context(vendors, accounts, shared)
     cases = []
     for i in range(n):
-        vendor = random.choice(vendors)
+        # Scenario first, THEN a vendor that can actually carry it. Drawing the
+        # vendor first and rejecting it afterwards would bias the vendor mix.
         scenario_type = random.choices(types, weights=weights, k=1)[0]
+        pool = ctx["pools"].get(VENDOR_POOL.get(scenario_type, ""), vendors)
+        if not pool:
+            raise RuntimeError(
+                f"no vendor can carry {scenario_type}; the master generated "
+                f"none in that state, and silently substituting a different "
+                f"vendor would mislabel the case")
+        vendor = random.choice(pool)
         cases.append(SCENARIO_FUNCS[scenario_type](vendor, f"CASE{i:05d}", ctx))
-    return cases
+    return cases, ctx
 
 
 def split_dev_holdout(cases, holdout_frac=0.30):
@@ -541,9 +1047,16 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
 
     vendors = generate_vendor_master(n=120)
-    write_csv(os.path.join(here, "vendor_master.csv"), vendors)
+    accounts, shared = generate_vendor_accounts(vendors)
 
-    cases = generate_cases(vendors, n=800)
+    # Cases run BEFORE the accounts file is written: scenarios that model an
+    # account being added put it on the master, which is the whole point of
+    # legit_added_then_paid and fraud_planted_account.
+    cases, ctx = generate_cases(vendors, accounts, shared, n=800)
+
+    write_csv(os.path.join(here, "vendor_master.csv"), vendors)
+    write_csv(os.path.join(here, "vendor_accounts.csv"), ctx["accounts"])
+
     dev, holdout = split_dev_holdout(cases, holdout_frac=0.30)
     write_csv(os.path.join(here, "cases_dev.csv"), dev)
     write_csv(os.path.join(here, "cases_holdout.csv"), holdout)
@@ -555,7 +1068,16 @@ def main():
             count = sum(1 for r in rows if r["scenario_type"] == t)
             print(f"   {t:20s} {count}")
 
-    print(f"vendor_master.csv: {len(vendors)} vendors\n")
+    grouped = sum(1 for v in vendors if v["group_id"])
+    per_vendor = {}
+    for a in ctx["accounts"]:
+        per_vendor[a["vendor_id"]] = per_vendor.get(a["vendor_id"], 0) + 1
+    spread = {k: sum(1 for c in per_vendor.values() if c == k)
+              for k in sorted(set(per_vendor.values()))}
+    print(f"vendor_master.csv:   {len(vendors)} vendors, {grouped} in a declared group")
+    print(f"vendor_accounts.csv: {len(ctx['accounts'])} accounts, "
+          f"vendors by account count {spread}")
+    print(f"seed {SEED}, as-of {AS_OF}\n")
     summarize("cases_dev.csv", dev)
     print()
     summarize("cases_holdout.csv", holdout)

@@ -298,10 +298,15 @@ def test_new_destination_with_no_document_is_held():
     assert r.audit["decision"]["rule_fired"] == "R2b_followup_unverified_destination"
 
 
-def test_destination_on_another_vendor_is_blocked():
+def test_destination_on_another_vendor_is_held_and_recommended_for_rejection():
     r = post(make_store(dest_account=OTHER_ACCT))
-    assert r.outcome == BLOCK
+    assert r.outcome == STEP_UP
+    assert r.audit["payout_allowed"] is False
     assert r.audit["decision"]["rule_fired"] == "R2c_followup_destination_conflict"
+    assert r.audit["decision"]["recommended_action"] == "reject"
+    # And it reaches the action plan, flagged, so nothing can act on it alone.
+    assert all(a["requires_human_confirmation"]
+               for a in r.audit["razorpay_actions"])
 
 
 def test_destination_comes_from_the_payout_not_the_document():
@@ -412,7 +417,10 @@ def test_dashboard_lists_a_decision():
     body = client.get("/").text
     assert "pout_1" in body
     assert "R2c_followup_destination_conflict" in body
-    assert "BLOCK" in body
+    # The hold and the recommendation both: without the second, a BEC case and
+    # a routine unfamiliar-account hold are the same pill in the queue.
+    assert "STEP_UP_VERIFY" in body
+    assert "RECOMMEND REJECT" in body
 
 
 def test_case_view_shows_the_signal_table():

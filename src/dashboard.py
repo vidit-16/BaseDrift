@@ -125,6 +125,18 @@ def _outcome_pill(outcome: str) -> str:
             f"{_e(outcome)}</span>")
 
 
+def _recommendation(decision: Dict[str, Any]) -> str:
+    """
+    The engine no longer rejects anything by itself, so the recommendation is
+    the only place a reviewer sees that it wanted to. Showing the hold without
+    it would make a BEC case and a routine unfamiliar-account hold look
+    identical in the queue.
+    """
+    if decision.get("recommended_action") != "reject":
+        return ""
+    return "<span class=\"pill block\" title=\"awaiting human confirmation\">RECOMMEND REJECT</span>"
+
+
 def render_index(audits: List[Dict[str, Any]]) -> str:
     if not audits:
         body = _header("no decisions yet")
@@ -135,7 +147,10 @@ def render_index(audits: List[Dict[str, Any]]) -> str:
         return _page("PayeeProof — decisions", body)
 
     held = sum(1 for a in audits if not a.get("payout_allowed"))
-    body = _header(f"{len(audits)} decisions · {held} not released")
+    rec = sum(1 for a in audits
+              if a.get("decision", {}).get("recommended_action") == "reject")
+    body = _header(f"{len(audits)} decisions · {held} not released"
+                   + (f" · {rec} recommended for rejection" if rec else ""))
     body += "<h2>Decisions, newest first</h2><table><thead><tr>"
     for h in ("payout", "vendor", "destination", "document", "rule", "outcome"):
         body += f"<th>{h}</th>"
@@ -155,7 +170,8 @@ def render_index(audits: List[Dict[str, Any]]) -> str:
             f"<div class=\"note\">{'from the payout' if verified else 'UNVERIFIED'}</div></td>"
             f"<td class=\"mono\">{_e(doc.get('correlation'))}</td>"
             f"<td class=\"mono\">{_e(d.get('rule_fired'))}</td>"
-            f"<td>{_outcome_pill(a.get('final_outcome', '?'))}</td>"
+            f"<td>{_outcome_pill(a.get('final_outcome', '?'))}"
+            f"{_recommendation(d)}</td>"
             "</tr>"
         )
     body += "</tbody></table>"
@@ -196,6 +212,7 @@ def render_case(a: Optional[Dict[str, Any]]) -> str:
 
     body += ("<div class=\"card\">"
              f"<div style=\"margin-bottom:10px\">{_outcome_pill(a.get('final_outcome','?'))} "
+             f"{_recommendation(d)}"
              f"<span class=\"mono\" style=\"margin-left:8px\">{_e(d.get('rule_fired'))}</span></div>"
              f"<div class=\"reason\">{_e(d.get('reason'))}</div></div>")
 

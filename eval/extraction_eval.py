@@ -338,14 +338,20 @@ def compute_outcomes(cases, extractions, rows_by_id, vendors, index):
         d_real = decide(ext, fav, vendor, other_vendor_accounts=index,
                         near_duplicate=row["near_duplicate_invoice"] == "True",
                         split_below=row["split_below_threshold"] == "True",
-                        destination_account_number=row["proposed_account_number"])
-        d_ideal = payeeproof(row, vendor, index)
+                        destination_account_number=row["proposed_account_number"],
+                        vendors=vendors)
+        d_ideal = payeeproof(row, vendor, index, vendors)
 
         reached = row["callback_reaches_known_contact"] == "True"
+        # The accounts the requester can actually send from. Which one gets
+        # DEMANDED is the verifier's decision, not the dataset's — see
+        # NOTES.md V2.S on why the old single bool made that unmeasurable.
+        controls = [a for a in
+                    (row.get("requester_controls_accounts") or "").split(";") if a]
         for tag, d, ctr in (("real", d_real, real), ("ideal", d_ideal, ideal)):
             v = verifier.verify(d, vendor, reached, c.case_id,
-                                controls_existing_account=(
-                                    row.get("controls_existing_account") == "True"))
+                                requester_controls_accounts=controls,
+                                as_of=row.get("request_date") or None)
             final = v.final_outcome if v else d.outcome
             allowed = v.payout_allowed if v else d.payout_allowed
             ctr[final] += 1
@@ -420,7 +426,8 @@ def main():
         model, err = llm_client.detect_model()
         if err:
             raise SystemExit(f"cannot reach the model: {err}\n"
-                             f"GROQ_API_KEY must be set in THIS shell.")
+                             f"PAYEEPROOF_API_KEY (or GROQ_API_KEY) must be set in "
+                             f"THIS shell.")
     print(f"model {model}   scoring {len(cases)} case(s)   runs {args.runs}")
     print()
 

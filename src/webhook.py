@@ -212,12 +212,18 @@ class Store:
         """
         return self.fund_accounts.get(fund_account_id)
 
-    def account_index(self) -> Dict[str, str]:
-        """{account_number: vendor_id} for the cross-contact reuse check."""
+    def account_index(self):
+        """
+        {account_number: set(vendor_ids)} for the cross-contact reuse check.
+
+        A set, because an account legitimately belongs to more than one contact
+        inside a corporate group. Assigning a single owner in a loop made the
+        last writer win and rejected the group.
+        """
         idx = {}
         for v in self.vendors.values():
             for acct in v.all_known_accounts():
-                idx[acct] = v.vendor_id
+                idx.setdefault(acct, set()).add(v.vendor_id)
         return idx
 
     # -- documents -----------------------------------------------------
@@ -396,20 +402,23 @@ def handle_payout_pending(raw_body: bytes,
     # 7. The decision engine decides. The handler does not.
     dec = decide(ext, fav, vendor,
                  other_vendor_accounts=store.account_index(),
-                 destination_account_number=fa.account_number)
+                 destination_account_number=fa.account_number,
+                 vendors=store.vendors)
 
     # Neither channel is attempted inline. The callback is a phone call and the
     # penny drop is a live RazorpayX call that the vendor has to act on — both
     # take minutes to days, and the webhook has seconds. The payout simply stays
     # pending until a channel resolves it out of band, which is the safe state
-    # anyway. controls_existing_account=None means channel 2 was not attempted.
+    # anyway. requester_controls_accounts=None means channel 2 was not attempted
+    # — not that it failed, and not that it passed.
     ver = verifier.verify(dec, vendor, callback_reaches_known_contact=False,
                           case_id=evt.payout_id,
-                          controls_existing_account=None)
+                          requester_controls_accounts=None)
     final = ver.final_outcome if ver else dec.outcome
     actions = verifier.razorpay_actions(
         final, ver.reason if ver else dec.reason,
         evt.payout_id, evt.fund_account_id,
+        recommended_action=dec.recommended_action,
     )
 
     audit = {
