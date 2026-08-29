@@ -141,53 +141,145 @@ Reproduce: `python eval/ablation.py` (the baseline half needs no API key)
 ## Layout
 
 ```
-src/llm_client.py       provider client — model auto-detect, 429 retry,
-                        reasoning-model handling
+src/llm_client.py       provider client — the ONLY module that talks to a
+                        provider; model auto-detect, 429 retry, reasoning-model
+                        handling. See "Choosing a provider" below.
 src/extractor.py        the only LLM step; semantic layer + claims
 src/decision_engine.py  deterministic policy; full rule table in docstring
-src/verifier.py         callback to vendor-master contact; RazorpayX actions
+src/verifier.py         two verification channels; names the account the penny
+                        drop must come from; RazorpayX actions
 src/pipeline.py         run_case() end to end -> audit dict
 src/webhook.py          payout.pending handler; signature verification,
                         destination resolution, document correlation
 src/webhook_app.py      ASGI entry point for uvicorn
 src/dashboard.py        operator view: decisions, and the evidence behind each
 src/webhook_demo.py     drives the real endpoint over real signed HTTP
+src/triage.py           inbox funnel: dedupe -> ingest rules -> vendor
+                        resolution (no model) -> classification
+src/inbox_signals.py    mailbox facts -> Tier 2 signals that can hold a payout
+                        and can never release one
+src/investigator.py     the one agent loop; read-only tools, envelope-derived
+                        arguments only
+mcp/inbox_server.py     MCP inbox tools — all read-only, all scoped to one
+                        merchant, both asserted structurally
 COMPLIANCE.md           what production would have to satisfy, and why
                         anonymisation is not available to this design
-tests/                  150 tests across 6 suites, none needing an API key
+NOTES.md                the working log: every v2 item, what it measured, and
+                        what it does not show
+tests/                  217 tests across 7 suites, none needing an API key
                         run them all: python tests/run_all.py
 eval/rules_eval.py      decision-engine scoring vs baselines, no API key needed
-data/render.py          case -> email renderer; leakage guard is a hard failure
+eval/triage_eval.py     inbox funnel scoring, including the allowlist
+                        counterfactual. No API key needed
 eval/extraction_eval.py what the extractor actually recovers, with caching
-eval/ablation.py        semantic vs keyword ablation
-data/generate_data.py   seeded generator (seed 42)
+eval/ablation.py        semantic vs keyword ablation (needs a key)
+data/render.py          case -> email renderer; leakage guard is a hard failure
+data/generate_data.py   seeded generator (seed 20260829, AS_OF 2026-06-30)
+data/generate_inbox.py  wraps the rendered cases in AP-inbox noise. Reads the
+                        corpus, never regenerates it, so it cannot void an
+                        extraction cache
 data/vendor_master.csv  120 vendors — the trusted record, committed
-data/cases_dev.csv      558 labeled cases, committed
-data/cases_holdout.csv  242 cases — gitignored, regenerate to reproduce
+data/vendor_accounts.csv  272 accounts with provenance, committed
+data/cases_dev.csv      552 labeled cases, committed
+data/cases_holdout.csv  248 cases — gitignored, regenerate to reproduce
+data/inbox_dev.csv      7,176 messages, 7.7% of them change requests
 ```
 
-Quick start:
+## Setup
 
 ```
 pip install -r requirements.txt
-python data/generate_data.py   # vendor master + dev/holdout splits
-python tests/run_all.py                # 150 tests, no API key needed
-python eval/rules_eval.py             # rule scoring vs baselines, no API key
-python src/webhook_demo.py            # signed webhook end to end
-
-set PAYEEPROOF_SEED_DEMO=1            # populate the dashboard on startup
-set RAZORPAY_WEBHOOK_SECRET=whsec_demo
-uvicorn webhook_app:app --app-dir src --port 8000
-python eval/ablation.py        # ablation; baseline half needs no API key
-
-$env:GROQ_API_KEY="gsk_..."    # PowerShell
-python src/pipeline.py         # hero case — refuses to run without the key
+python data/generate_data.py    # vendor master, accounts, dev/holdout splits
+python data/generate_inbox.py   # the AP inbox around those cases
 ```
 
-`src/pipeline.py` exits non-zero rather than printing a verdict when
-`GROQ_API_KEY` is missing. Without a key, extraction fails, the payout is held,
-and the hold looks superficially like a catch — so the demo declines to show one
-rather than take credit for work the semantic layer never did.
+Everything below this line runs with **no API key**:
+
+```
+python tests/run_all.py       # 217 tests across 7 suites
+python eval/rules_eval.py     # rule scoring vs baselines
+python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
+python src/webhook_demo.py    # five signed scenarios over real HTTP
+```
+
+The dashboard:
+
+```
+$env:PAYEEPROOF_SEED_DEMO="1"          # populate it on startup
+$env:RAZORPAY_WEBHOOK_SECRET="whsec_demo"
+uvicorn webhook_app:app --app-dir src --port 8000
+```
+
+### Choosing a provider
+
+The pinned model, `gpt-oss-120b`, is **open-weight** — roughly eighteen
+companies run the same weights, and the model does not change when the provider
+does. That is what keeps the data-localisation option in COMPLIANCE.md open, and
+it is why the provider is configuration rather than code.
+
+| variable | what it does |
+|---|---|
+| `PAYEEPROOF_BASE_URL` | provider root, OpenAI-compatible. Defaults to Groq |
+| `PAYEEPROOF_API_KEY` | key for that provider. Falls back to `GROQ_API_KEY` |
+| `PAYEEPROOF_MODEL` | pin a model id, skipping detection |
+| `PAYEEPROOF_PROVIDER` | routing layers only: pin *which host* serves the model |
+| `PAYEEPROOF_CALL_GAP` | seconds between calls. Default 7.0 |
+
+**`PAYEEPROOF_CALL_GAP` is the one to change first.** 7 seconds exists to stay
+under Groq's free-tier per-minute ceiling. Anywhere else it adds 93 minutes to
+an 800-case run for nothing.
+
+Windows, PowerShell — persists across reboots:
+
+```
+[Environment]::SetEnvironmentVariable("PAYEEPROOF_API_KEY", "sk-...", "User")
+[Environment]::SetEnvironmentVariable("PAYEEPROOF_BASE_URL", "https://openrouter.ai/api/v1", "User")
+[Environment]::SetEnvironmentVariable("PAYEEPROOF_CALL_GAP", "0.5", "User")
+```
+
+macOS or Linux:
+
+```
+export PAYEEPROOF_API_KEY="sk-..."
+export PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1"
+export PAYEEPROOF_CALL_GAP="0.5"
+```
+
+**A gotcha that cost an hour.** `SetEnvironmentVariable(..., "User")` writes to
+the registry, and processes that are ALREADY RUNNING do not pick it up — including
+the terminal you typed it in. Open a new one, or set `$env:NAME="..."` as well
+for the current session.
+
+Known-good settings, all running the same weights:
+
+| provider | `PAYEEPROOF_BASE_URL` | model id | 800 calls |
+|---|---|---|---|
+| OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-oss-120b` | ~$0.11 |
+| Groq | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` | ~$0.37 |
+| Cerebras | `https://api.cerebras.ai/v1` | `gpt-oss-120b` | ~$0.64 |
+
+Cerebras drops the `openai/` prefix; `MODEL_PREFERENCE` carries both spellings,
+because without the second, detection there would silently fall through to a
+different model.
+
+Then the steps that cost API calls:
+
+```
+python src/pipeline.py                      # the hero case, one call
+python eval/extraction_eval.py --split dev  # 552 calls, ~$0.09
+python eval/ablation.py                     # semantic vs keyword ablation
+```
+
+`src/pipeline.py` exits non-zero rather than printing a verdict when no key is
+set. Without one, extraction fails, the payout is held, and the hold looks
+superficially like a catch — so the demo declines to show one rather than take
+credit for work the semantic layer never did.
+
+`eval/extraction_eval.py` caches every result keyed by the message hash, the
+model and the prompt hash, so it is resumable and re-running it costs nothing.
+It never caches a transport failure: a rate-limited run once persisted 201
+"extraction failed" records that would have poisoned every later scoring pass
+with a 56% failure rate that was really the network.
 
 ---
 
@@ -623,47 +715,100 @@ has to be set deliberately.
 
 ## The held-out result — v2
 
-Scored once, at the end, as committed. **249 cases, the full split**, both
-rules-only and end to end with the live model. v1's holdout is kept below it for
-comparison, with the caveat that the two are not the same corpus.
+**248 cases, the full split**, both rules-only and end to end with the live
+model.
 
-| | v2 dev (551) | **v2 holdout (249)** | null baseline |
+**The holdout was scored twice, and both runs are below.** The first corpus was
+generated wrong — see *Why there are two runs* — so its numbers describe a
+dataset that no longer exists. Nothing was tuned from what it showed.
+
+| | v2 dev (552) | **v2 holdout (248)** | null baseline |
 |---|---|---|---|
 | recall | 100% | **100%** | 100% |
-| precision | 85.9% | **84.9%** | 84.3% |
+| precision | 85.1% | **87.1%** | 85.8% |
 | **false BLOCK** | 0.0% | **0.0%** | 0.0% |
-| held | 78.4% | **77.9%** | 100% |
-| false hold | 14.9% | **16.0%** | 16.8% |
+| held | 79.3% | **79.4%** | 100% |
+| false hold | 16.6% | **14.2%** | 15.7% |
 
-End to end, with the real model on all 249: **recall 100%, precision 84.9%,
+End to end, with the real model on all 248: **recall 100%, precision 87.1%,
 false BLOCK 0.0%** — identical to the perfect-extraction upper bound, agreeing
-on the rule fired in **99.6%** of cases. Zero extraction failures. Intent 100%,
-scope 100%, action 99.2%; the two misreads are both `ADD` read as `REPLACE` and
-neither changes an outcome.
+on the rule fired in **98.8%** of cases. Zero extraction failures. Intent 99.6%,
+scope 99.6%, action 98.8%; all three misreads are `ADD` read as something else,
+and none changes an outcome.
+
+### Why there are two runs
+
+While verifying a figure for this README, one would not reconcile:
+`vendor_accounts.csv` held 213 rows where the text said 272. The cause was a
+variable name. A domain de-duplication loop used `n` as its collision counter,
+and `n` was already `generate_vendor_master`'s vendor-count parameter — so it
+left the loop as `2`, and `range(max(1, n // 6))` built **one** declared
+corporate group instead of twenty.
+
+That first corpus therefore had a single group of three vendors sharing one
+account, and all 37 `legit_group_shared_account` cases were drawn from that one
+configuration. The result reported from it was true and close to meaningless.
+
+**It was not a local defect.** One group instead of twenty is a different number
+of RNG draws, so the stream shifted and every subsequent value changed. Between
+the two dev splits, **zero rows are byte-identical** and only 379 case ids even
+overlap. The first corpus was a different dataset, not a narrower one.
+
+| | run 1 (defective corpus) | run 2 (corrected) |
+|---|---|---|
+| holdout size | 249 | 248 |
+| recall | 100% | 100% |
+| precision | 84.9% | 87.1% |
+| false BLOCK | 0.0% | 0.0% |
+| false hold | 16.0% | 14.2% |
+| declared groups in the master | **1** | **20** |
+| groups sharing an account | **1** | **14** |
+
+**Every one of the 216 tests passed on the broken corpus.** Both evals ran
+clean, the generator was byte-identical across two runs, and the leakage guard
+reported 0/551. One declared group *is* a structurally valid vendor master.
+Nothing asserted that the corpus contained *enough* of a scenario to measure it
+— this project's own recurring finding, a coded capability with no data behind
+it, turned on the data itself.
+
+The guard added in response puts a **diversity floor** on the master rather than
+a shape check: unique domains, at least 10 declared groups, at least 5 shared
+accounts, and every shared account confined to a single group. It fails on the
+broken corpus where every previous assertion passed.
+
+Scoring a holdout twice is an exception to a claim this project makes, so it is
+recorded rather than absorbed. What makes it defensible: the regeneration was
+forced by a figure that would not reconcile, not by a result anyone disliked;
+nothing was tuned from the first holdout; and the second corpus is a different
+dataset rather than a second look at the same one.
 
 **The three v1 defects stay closed on data nothing was tuned against:**
 
 | scenario | v1 behaviour | v2 holdout |
 |---|---|---|
-| corporate group sharing an account | **rejected** | 12/12 allowed |
-| vendor's legitimate second account | held on every payout, forever | 10/10 allowed |
-| account added by an earlier accepted request | could not be represented | 8/8 allowed |
-| attacker penny-drops from a planted account | **channel 2 confirms the fraud** | 12/12 held |
+| corporate group sharing an account | **rejected** | 9/10 allowed |
+| vendor's legitimate second account | held on every payout, forever | 9/9 allowed |
+| account added by an earlier accepted request | could not be represented | 10/10 allowed |
+| attacker penny-drops from a planted account | **channel 2 confirms the fraud** | 13/13 held |
+
+The single held group case is an unrelated Tier-1 inconclusive, not a group
+rejection. Those 10 cases are drawn from 14 genuinely sharing groups, which is
+the difference the corpus fix made: in run 1 the same result came from one.
 
 **And the customer-facing failure is gone.** v1 rejected **2.2%** of legitimate
 holdout traffic outright. v2 rejects nothing at all — not as an accuracy result
-but *by construction*, because no rule can reach a rejection any more. The 60
+but *by construction*, because no rule can reach a rejection any more. The 57
 holds that carry a rejection recommendation are **all fraud**; none is
 legitimate.
 
 ### Read these numbers honestly
 
-**Precision 84.9% against a null baseline of 84.3%, and false hold 16.0%
-against 16.8%.** On accuracy, the rule table is barely distinguishable from
-holding every payout and phoning every vendor. That was true in v1 and it is
-still true, and no amount of work in v2 changed it.
+**Precision 87.1% against a null baseline of 85.8%, and false hold 14.2%
+against 15.7%.** On accuracy, the rule table is barely distinguishable from
+holding every payout and phoning every vendor. That was true in v1, it was true
+on both v2 corpora, and no amount of work in v2 changed it.
 
-What the rules actually buy is the **release rate**: 22.1% of payouts clear with
+What the rules actually buy is the **release rate**: 20.6% of payouts clear with
 no phone call at all, and the holds are triaged rather than being one pile — a
 BEC case and a routine unfamiliar-account hold are distinguishable in the queue.
 
@@ -758,7 +903,8 @@ to prevent.
 **Real, and runs:** the decision engine and its rule table; the semantic layer
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency handling; document correlation; the rules evaluation and the
-ablation; the operator dashboard; 150 tests.
+ablation; the operator dashboard; the inbox triage funnel and its MCP tool
+layer; 217 tests.
 
 **Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
 vendor lookups that would be API reads. FAV results are replayed
