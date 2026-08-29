@@ -215,7 +215,10 @@ The v1 holdout is spent. Everything below changes rules, so it needs a FRESH
 holdout from a new seed — and that holdout should also carry the inbox threat
 scenarios, otherwise it resamples the same distribution and tests nothing new.
 
-V2.0  THE VENDOR MASTER IS ONE-ACCOUNT-PER-VENDOR, AND THAT IS WRONG.
+V2.0  ── DONE (Phases 3-4), not yet committed. See V2.R for what it
+      measured. Original scope follows.
+
+      THE VENDOR MASTER IS ONE-ACCOUNT-PER-VENDOR, AND THAT IS WRONG.
       Promote this above the rest: it is the root of trust for every check in
       the system, and it currently has a reproducible false-BLOCK path.
 
@@ -284,7 +287,10 @@ V2.0  THE VENDOR MASTER IS ONE-ACCOUNT-PER-VENDOR, AND THAT IS WRONG.
       This is arguably a bigger item than triage. It is the difference between
       "we check against a trusted record" and "we check against a record".
 
-V2.6  WHICH ACCOUNT DOES THE PENNY DROP COME FROM?
+V2.6  ── DONE (Phase 4), not yet committed. select_verification_account()
+      in verifier.py; the third state is UNAVAILABLE_C2. See V2.R.
+
+      WHICH ACCOUNT DOES THE PENNY DROP COME FROM?
       Falls out of V2.0 and is a REDESIGN of verifier.py, not an edit. It was
       invisible while every vendor had exactly one account.
 
@@ -341,7 +347,57 @@ V2.6  WHICH ACCOUNT DOES THE PENNY DROP COME FROM?
       alone cannot answer "has this account received a settled payout". This
       needs SETTLEMENT HISTORY, not just an account list.
 
-V2.1  STOP REJECTING AUTOMATICALLY.  Measured on dev, 556 cases:
+V2.1  STOP REJECTING AUTOMATICALLY.  ── DONE (Phase 1), not yet committed.
+
+      Shipped: every rule that returned BLOCK now returns STEP_UP carrying
+      recommended_action="reject". razorpay_actions() emits the reject and the
+      deactivate call, both flagged requires_human_confirmation, so a reviewer
+      sees the recommendation and one click acts on it while nothing acts on it
+      alone. There is no BLOCK outcome left in the engine; a structural test
+      asserts the literal is gone, because a behavioural sweep only covers the
+      inputs someone thought of.
+
+      Measured on dev (556 cases), against the v1 baseline:
+
+        metric              v1        v2 phase 1
+        recall            100.0%        100.0%     unchanged, no fraud released
+        precision          86.0%         86.3%
+        false BLOCK         0.6%          0.0%     and now 0 BY CONSTRUCTION
+        held               52.7%         79.5%
+        false hold         11.7%         12.0%
+        recommendations       —      144, 0 legitimate
+
+      Read the last two rows together. The step-up column rose because the 149
+      cases v1 rejected are now holds, so "held" no longer means "needs a phone
+      call" — 144 of those holds are recommendations awaiting a click. The eval
+      prints both columns for exactly that reason: with rejection removed,
+      false BLOCK is zero by construction and says nothing on its own.
+
+      THE FINDING THIS TURNED UP, which the plan did not anticipate.
+      R2c, R3 and R4 used to END the case. Now they hold — so for the first
+      time their cases flow INTO verification, and a passing channel would
+      RELEASE a payout the previous version rejected. Recall would have fallen
+      silently, and the release would have read in the audit as an ordinary
+      verified change.
+
+      So verify() gained one rule: A HOLD CARRYING A REJECTION RECOMMENDATION
+      IS NEVER AUTO-RELEASED. The channels still run and their results are
+      recorded as evidence, but the case ends with a human. Evidence of
+      impersonation, an identity conflict against the master, or a destination
+      belonging to a different vendor are not things a phone call or a rupee
+      clears.
+
+      HONEST NOTE ON THAT GUARD: the dev split does not exercise it. Recall is
+      100% with the guard disabled, because no fraud case in the data both
+      recommends rejection and passes a channel. Two tests cover it and both
+      fail without it, but they are constructed, not sampled — this is a
+      correctness property with no data behind it yet, which is the exact shape
+      of defect this project keeps finding. Phase 3 must generate the case:
+      fraud, recommended for rejection, controls_existing_account=True. That is
+      the V2.6 planted-account attack, and until it exists in the data the guard
+      is asserted rather than measured.
+
+V2.1  BASELINE MEASUREMENT that drove the above.  Measured on dev, 556 cases:
 
         policy                              recall  falseBLK  rejects  holds
         reject on any Tier 1 FAIL (v1)      100.0%      0.6%      149    130
@@ -366,7 +422,9 @@ V2.1  STOP REJECTING AUTOMATICALLY.  Measured on dev, 556 cases:
       Cost at real volume: a handful of extra holds per day. See the volume
       model — even 20,000 payouts/day yields ~40 change requests.
 
-V2.2  TRIAGE — and most of it is NOT an agent.
+V2.2  ── DONE (Phase 5). See V2.T. Original scope follows.
+
+      TRIAGE — and most of it is NOT an agent.
 
       Today POST /documents is hand-fed a vendor_id. A real AP inbox is ~500
       messages/day of invoices, chasers, statements, internal mail and spam,
@@ -391,7 +449,9 @@ V2.2  TRIAGE — and most of it is NOT an agent.
       "in the master OR a lookalike of something in it" — reuse
       decision_engine.is_lookalike_domain(), do not rebuild it.
 
-V2.3  MCP INBOX — a tool layer, not a stage. It appears twice:
+V2.3  ── DONE (Phase 5). See V2.T. Original scope follows.
+
+      MCP INBOX — a tool layer, not a stage. It appears twice:
         (1) SOURCE   list_messages / get_message — without it there is no
             triage input at all.
         (2) TOOLS    get_thread / search_history / prior_change_requests —
@@ -417,7 +477,439 @@ V2.3  MCP INBOX — a tool layer, not a stage. It appears twice:
       It does NOT rescue the compromised-mailbox case — the history there is
       genuine.
 
+V2.R  WHAT PHASES 3 AND 4 ACTUALLY PRODUCED  (measured, dev split, 551 cases)
+
+      ── The corpus ──────────────────────────────────────────────────
+      seed 20260829, AS_OF 2026-06-30, 120 vendors with UNIQUE domains, 272
+      accounts on file, 800 cases split 551 / 249. 46 vendors in a declared
+      group, 14 groups genuinely sharing a facility. 800 rendered messages, 800
+      distinct, ZERO leakage failures, byte-identical across two full runs.
+
+      (Vendor domains were not unique at first — legal names come from a small
+      pool and _domain() collided for 57 of 120. A domain shared by two
+      unrelated vendors makes the sender an ambiguous identifier and quietly
+      turns triage's vendor resolution into a coin flip. Found by evaluating
+      triage, fixed in the generator, corpus regenerated. Every figure below is
+      from the final corpus.)
+
+      ── The three v1 defects, closed and measured ───────────────────
+
+        legit_group_shared_account   25 of 25 ALLOW   (v1: REJECTED)
+        legit_second_account         22 of 22 ALLOW   (v1: held, every time,
+                                                       forever)
+        legit_added_then_paid        16 of 16 ALLOW   (v1: could not exist)
+
+      ── V2.6, and the number that justifies it ──────────────────────
+
+      The counterfactual, run against the same corpus with the OLD channel-2
+      policy — "prove you control an account on file", the requester choosing
+      which:
+
+        released under "any account on file"    26 fraud_planted_account cases
+        released under the NAMED-account policy 0
+
+      All 26. Every one of them a case where the attacker had earlier got an
+      account onto the vendor master and now penny-drops from it, and the
+      strongest control in the system confirms the fraud. Recall would have been
+      ~90.3% rather than 100%, and every miss would have read in the audit as a
+      successfully verified change.
+
+      THE PRICE, stated because it is not zero: 10 legitimate cases moved from
+      released to held (3.5% of legitimate traffic). Those are vendors with no
+      account that qualifies to prove anything — genuinely new suppliers, no
+      settled payout yet — and holding them is correct, because nothing exists
+      to compare against. The trade is 26 fraud caught for 10 calls made.
+
+      Channel 2 unavailable fired on 43 cases (7.8%), 30 fraud / 13 legit. It
+      escalates and never falls back to the callback, which is the whole point:
+      falling back would release exactly the sim-swap case the second channel
+      was added for.
+
+      AND THE HONEST CAVEAT ON THE 26/26. That figure is a property of a corpus
+      built to contain the attack. The attack itself is real — establishing a
+      foothold and using it later is ordinary BEC tradecraft — but 26 of 26 is
+      not a field measurement, and the generator and the fix were written by the
+      same hand. What it demonstrates is that the OLD policy is defeated by a
+      case this corpus can now express and the v1 corpus could not.
+
+      ── The cost side of the ledger, not buried ─────────────────────
+
+        metric        v1 dev   v2 phase 1   v2 final   null baseline
+        recall         100.0%      100.0%     100.0%          100.0%
+        precision       86.0%       86.3%      85.9%           83.8%
+        held            52.7%       79.5%      78.4%          100.0%
+        false BLOCK      0.6%        0.0%       0.0%            0.0%
+        false hold      11.7%       12.0%      14.9%           17.7%
+
+      FALSE HOLD ROSE, 12.0% -> 14.9%, and the cause is the third state: a
+      legitimate vendor with no seasoned account is now held even when the
+      callback answers. Against a null baseline of 17.7% that is a thin margin,
+      and pretending otherwise would be the same error this project keeps
+      finding in itself. What the rules still buy over holding everything is the
+      RELEASE rate — 21.6% of payouts need no phone call at all — plus the fact
+      that the holds are triaged: 135 of them carry a rejection recommendation
+      and none of those 135 is legitimate.
+
+      Note also that the split is not comparable case-for-case with v1: new
+      seed, new scenarios, 48.8% fraud versus v1's 43%. The v1 column is
+      context, not a controlled comparison.
+
+V2.T  WHAT PHASE 5 PRODUCED — TRIAGE AND THE INBOX  (V2.2, V2.3: DONE)
+
+      New: src/triage.py, src/inbox_signals.py, src/investigator.py,
+      mcp/inbox_server.py, data/generate_inbox.py, eval/triage_eval.py,
+      tests/test_triage_inbox.py (31 tests). 205 tests in total, all green.
+
+      ── The corpus ──────────────────────────────────────────────────
+      data/generate_inbox.py READS the already-rendered cases and surrounds
+      them with noise, so it cannot void an extraction. dev: 7,163 messages,
+      551 of them genuine change requests (7.7%). The noise is adversarial to
+      the CHEAP stages on purpose — 30.6% of it quotes an account number,
+      because real invoices do, so a keyword pre-read cannot separate the
+      classes on its own.
+
+      ── THE TRAP, AND THEN THE OTHER HALF OF IT ─────────────────────
+
+      "Only read mail from senders in the vendor master" is the obvious first
+      stage. Measured on the dev inbox, it discards 170 fraudulent change
+      requests — 64.6% OF ALL THE FRAUD IN THE MAILBOX — while improving every
+      operational number in sight. A typosquat is by construction not in the
+      master; that is what makes it a typosquat.
+
+      That much was anticipated. What was NOT, and what only appeared by
+      evaluating: domain matching WITH lookalikes still lost 119 genuine change
+      requests — 51 legitimate rebrands (an acquired vendor writing from the
+      parent's domain, which resembles nothing) and 68 fraud cases whose forged
+      domain was too far from the original to register as a typosquat. Both
+      populations are simply "a sender not in the master", and an allowlist
+      cannot tell them apart.
+
+      Fix: a third match kind, CONTENT — the body quotes a GSTIN or legal name
+      that IS in the master. Recovered all 119, pulled in 0 of 1,474
+      unknown-sender noise messages, and took change requests surviving triage
+      from 66.1% to 100.0%. Labelled as the weakest of the three matches,
+      because anyone can type a GSTIN: a reason to READ, never a claim about
+      who sent it.
+
+      A second defect the same eval turned up: the pre-read was vocabulary, and
+      "Details on your file are 416961125393 / SBIN0980865" names a destination
+      using none of the words. 73 genuine messages dropped for it. Now matched
+      structurally, on a long digit string adjacent to an IFSC-shaped token.
+
+      ── Cost ────────────────────────────────────────────────────────
+      31.2% of the mailbox resolved with NO model call; 7,163 messages become
+      2,367 reaching extraction, a 67.0% reduction. CAVEAT recorded in the eval
+      itself: authored noise is easier than real mail — no forwarded chains, no
+      attachment-only messages, no vendors who write like spammers — so treat it
+      as an upper bound from a corpus built by the same people as the funnel.
+
+      ── WHY MISROUTING HERE IS NOT A MONEY RISK ─────────────────────
+      Triage decides what gets READ; it decides nothing about a payout. The
+      control point is payout.pending, which fires whether or not any email was
+      seen. A wrongly dropped change request becomes a payout with
+      evidence_source="no_document_supplied", and R2 then rules on the REAL
+      destination — known account passes, unseen account holds, another vendor's
+      account still fires R2c. The mule check survives the message never being
+      read at all. The failure mode of the whole layer is an unnecessary hold.
+
+      ── V2.3, and the one rule that carries it ──────────────────────
+      INBOX EVIDENCE CAN HOLD A PAYOUT AND CAN NEVER RELEASE ONE. Enforced, not
+      described: every inbox signal is WARN or INCONCLUSIVE and never PASS, and
+      decide() rejects anything else AT THE DOOR.
+
+      That guard was first placed where the signals are used, which put it after
+      R1 and R2 — so a follow-up short-circuited to ALLOW without it ever
+      running, and whether a smuggled signal was caught depended on which rule
+      fired. A guard only some paths reach is not a guard. Moved ahead of the
+      rule table.
+
+      The reason for the asymmetry: mailbox history is the most
+      attacker-shapeable evidence in the system. Someone inside a mailbox can
+      send themselves messages, build a thread to any depth, and manufacture
+      months of correspondence. So a long, ordinary, established correspondence
+      produces NO SIGNAL — the absence of a warning, never a reassurance.
+
+      MCP tools: get_message, get_thread, search_history, prior_change_requests,
+      thread_depth. All read-only, all scoped to one merchant, both properties
+      asserted structurally by the tests rather than documented. The agent reads
+      attacker-controlled text while holding tools, and the only thing stopping
+      an injection from acting is that there is nothing to act with.
+
+      search_history takes `before` so the mailbox is read AS IT WAS when the
+      message arrived. Without it the agent reads the future and "has this
+      sender written before?" gets answered with mail that had not yet arrived.
+
+      ── WHAT IS NOT EVALUATED, SAID PLAINLY ─────────────────────────
+      investigator.py's optional `reasoner` hook — an LLM choosing tool calls —
+      is UNEVALUATED. There is no eval corpus for it and no budget to build one
+      before the holdout. The deterministic evidence gathering is what runs and
+      what the tests measure. An unevaluated agent loop presented as a feature
+      is exactly the shape of defect this project keeps finding in itself, so it
+      is wired to be evaluable and labelled as not yet evaluated.
+
+      Also unevaluated: the triage CLASSIFIER stage. Without an API key it falls
+      back to the deterministic pre-read, so the 2,367 routed messages include
+      1,816 noise messages the model would be expected to remove. The eval
+      prints that as a floor rather than a result.
+
+V2.7  THE PROVIDER IS CONFIGURATION, NOT CODE  (DONE, Phase 6 prep)
+
+      Not in the original v2 scope. It arrived because Groq's free tier caps at
+      200,000 tokens/day and re-extracting 800 cases needs ~1.25M, so the run
+      was 9-12 days — and Groq's paid tier was not available to sign up for.
+
+      ── The measurement that reframed the problem ───────────────────
+      A live probe, rather than the estimate in the plan:
+
+        prompt_tokens       917
+        completion_tokens   644   of which 483 are REASONING tokens
+        reserved per call  2917   = 917 + max_tokens(2000)
+
+      Groq reserves prompt + max_tokens against the daily cap, so DEFAULT_MAX_
+      TOKENS was 69% of the cost of every call. The obvious fix was to lower it.
+
+      IT DOES NOT WORK, and finding out cost one call: max_tokens=700 returns
+      HTTP 400. The model spends 483 tokens reasoning before the first JSON
+      character, so the response truncates mid-object and fails to parse — which
+      arrives downstream as an EXTRACTION FAILURE, not a configuration error.
+      That is the same shape as the bug that once cached 201 transport failures
+      as real results. A test now pins DEFAULT_MAX_TOKENS >= 1400.
+
+      ── What actually solved it ─────────────────────────────────────
+      gpt-oss-120b is OPEN-WEIGHT. Groq does not own it; ~18 companies run the
+      same weights. So the fix was to change WHO RUNS THE MODEL, not which
+      model — which costs nothing, because the weights are identical:
+
+        provider     input/M   output/M   800-call run
+        CoreWeave      $0.03      $0.17      $0.11
+        DeepInfra      $0.037     $0.17      $0.13
+        Groq           $0.15      $0.60      $0.37   (tier unavailable)
+
+      The alternatives on the table were closed, hosted-only models behind a
+      major vendor's key. Any of them forfeits two things: the
+      open-weight self-hosting argument that is COMPLIANCE.md's entire answer to
+      RBI payment-data localisation, and comparability with v1's extraction
+      measurements. Neither was worth saving nothing.
+
+      ── The claim this makes testable ───────────────────────────────
+      COMPLIANCE.md said llm_client.py is the only module that talks to a
+      provider, so moving inference in-country is a one-file change. True, and
+      never exercised. It is now FIVE ENVIRONMENT VARIABLES and it has been
+      exercised against a second provider:
+
+        PAYEEPROOF_BASE_URL   provider root (default: Groq)
+        PAYEEPROOF_API_KEY    falls back to GROQ_API_KEY, so existing setups
+                              keep working and this is additive
+        PAYEEPROOF_MODEL      pin an id, skipping detection
+        PAYEEPROOF_PROVIDER   OpenRouter: pin WHICH host serves the model
+        PAYEEPROOF_CALL_GAP   7.0s is a Groq free-tier figure that costs 93
+                              minutes over 800 calls anywhere else
+
+      MODEL_PREFERENCE gained the bare "gpt-oss-120b" spelling: Groq and
+      OpenRouter publish the model as openai/gpt-oss-120b, Cerebras drops the
+      prefix. Without both, detection on Cerebras would silently fall through to
+      a DIFFERENT model — a model swap nobody chose and nothing would report.
+
+      ── WHY served_by IS IN THE AUDIT RECORD ────────────────────────
+      OpenRouter routes one model id across ~18 hosts. The first live call
+      through it was served by "Mancer 2" — a host that had not been costed and
+      that nothing in the record would have named.
+
+      "gpt-oss-120b decided this payout" is therefore not a traceable claim. So
+      ExtractionResult gained served_by, llm_client reports the host and the
+      token usage back through meta, and PAYEEPROOF_PROVIDER pins routing with
+      allow_fallbacks=False — because a pin that silently falls back is worse
+      than no pin at all: the audit would name one company while another ran the
+      model.
+
+      Nine tests cover the boundary, including that a trailing slash on the base
+      URL does not produce a double slash, that a malformed CALL_GAP falls back
+      rather than crashing a run that has been going for hours, and that no
+      provider field is sent when none is pinned.
+
+V2.S  THE SCHEMA, DECIDED IN FULL BEFORE THE GENERATOR RUNS (Phase 2)
+
+      Written down because the generator pass can only be paid for once: it
+      voids every cached extraction, and re-extracting 800 cases costs ~2 h on
+      a clean run, ~9.6 h rate-limited, ~7 days against the free tier's daily
+      token cap. A column remembered afterwards costs that again. So every
+      column V2.0, V2.6, V2.2 and V2.3 will need is decided here, including the
+      ones nothing reads yet.
+
+      ── data/vendor_accounts.csv (NEW) ──────────────────────────────
+
+        vendor_id             FK to vendor_master
+        account_number        the account
+        ifsc
+        status                active | dormant | closed
+        added_on              ISO date
+        added_via             onboarding | portal | email_request | phone_request
+        verified_by           onboarding_kyc | penny_drop | callback | unverified
+        verified_on           ISO date, blank when unverified
+        settled_payout_count  int, payouts that SETTLED to this account before
+                              the case's own date
+        last_settled_on       ISO date, blank when the count is 0
+        is_primary            true for exactly one row per vendor
+
+      A separate table rather than a wider vendor_master column, because these
+      are attributes OF THE ACCOUNT, not of the vendor. A pipe-joined column
+      could hold the numbers and nothing else, and every one of the remaining
+      fields is load-bearing:
+
+        added_via    is the circularity check. V2.6 requires that the account
+                     naming the penny drop was NOT added by the channel now
+                     being verified — an account added by an email request
+                     cannot verify another email request.
+        verified_by  is the trust-anchor question. The vendor master is the root
+                     of trust for every check in this system, so an account that
+                     entered it unverified is worthless as an anchor: the
+                     destination would be checked against a record an attacker
+                     could have written. Not a nice-to-have column.
+        settled_*    is "money actually arrived here", which being listed does
+                     not prove.
+
+      ── data/vendor_master.csv (CHANGED) ────────────────────────────
+
+        DROP  known_account_number, known_ifsc
+        ADD   group_id           blank, or a shared id for a declared group
+
+      known_account_number moves into vendor_accounts as the is_primary row.
+      Keeping it in both places would let them diverge, and the divergence would
+      be silent — the loader reads one, the eval prints the other.
+
+      VendorRecord.known_account_number STAYS as an attribute; load_vendors()
+      derives it from the is_primary row. 23 call sites keep working, the data
+      has one source of truth, and the loader asserts exactly one is_primary row
+      per vendor rather than picking whichever came first.
+
+      THE TRAP IN group_id, recorded before it is written rather than after:
+
+          if a.group_id == b.group_id:   -> legitimate      # WRONG
+
+      Two blanks are equal. That releases every pair of ungrouped vendors — it
+      turns the mule check off for the ~85% of the master with no group. It must
+      be:
+
+          if a.group_id and a.group_id == b.group_id:
+
+      A group is DECLARED by the merchant. It is never inferred from a shared
+      account, because a shared account is the thing being judged.
+
+      ── The account index becomes many-to-many ──────────────────────
+
+        build_account_index() -> Dict[str, Set[str]]      account -> {vendor_ids}
+
+      Today it is Dict[str, str] built with `idx[acct] = v.vendor_id` in a loop,
+      so a second vendor SILENTLY OVERWRITES the first, and a payout to a shared
+      account is rejected for whichever vendor lost the race. The dict is the
+      bug, not the rule that reads it.
+
+      check_account_continuity then reads:
+        owners == {this vendor}                    -> PASS
+        owners share a declared group with this one -> PASS
+        any other vendor                            -> FAIL, cross-contact reuse
+        not on file anywhere                        -> WARN, new account
+
+      ── Settlement history: a count, not per-payout rows ────────────
+
+      The V2.6 policy asks two questions of an account — "has money actually
+      arrived here" and "was it added long enough ago" — and settled_payout_count
+      plus last_settled_on answer both. Per-payout rows would be a third CSV and
+      a third thing to keep consistent.
+
+      WHAT THAT FORECLOSES, stated so it is a decision and not an oversight: any
+      later rule of the form "N settled payouts within the last M months", or
+      anything about the AMOUNTS that settled. Both are plausible v3 signals. If
+      one is wanted, that is a new generator pass — which is the whole reason
+      this section exists.
+
+      ── SEASONING_DAYS = 90 ─────────────────────────────────────────
+
+      A tunable with a trade-off, not a discovered constant. Longer is safer
+      against a planted account and harder on a vendor whose genuine second
+      account is recent.
+
+      90 because it must exceed a normal payment cycle. A vendor's account
+      typically receives its first settled payout 30-60 days after being added,
+      so a shorter window would make "seasoned" and "has a settled payout" the
+      same condition asked twice, and the second test would buy nothing. And an
+      attacker who holds a compromised mailbox for 90 days undetected is a
+      materially rarer adversary than the one this system is built for.
+
+      ── THE DATE PROBLEM, which is a real trap ──────────────────────
+
+      Seasoning is a comparison against a date, and the naive version is
+      `(datetime.now() - added_on).days >= 90`. That makes the dataset AGE: a
+      case that holds today releases in six months, tests pass on the machine
+      that wrote them and fail later, and nothing in the diff explains it.
+
+      So: the generator emits a frozen AS_OF date and every case carries its own
+      request_date. Seasoning is measured against the CASE's date, never against
+      the clock. The dataset is then reproducible in 2030.
+
+      ── data/cases_*.csv: stop encoding the policy's answer ─────────
+
+      Today the case carries controls_existing_account: one bool meaning "a
+      penny drop from the account on file would succeed". That was fine while
+      every vendor had exactly one account, and it is the reason V2.6 was
+      invisible for so long — the DATA already answered the question the policy
+      is supposed to decide. With several accounts on file, "the account on
+      file" is not a thing.
+
+      Replace it with a description of the world, and let the code choose:
+
+        REMOVE  controls_existing_account
+        ADD     requester_controls_accounts   ;-joined account numbers the
+                                              requester can actually send from
+        ADD     request_date                  ISO date, the case's "now"
+        ADD     destination_account_number    already present as
+                                              proposed_account_number; keep
+
+      The verifier then NAMES an account by policy, and the evaluator checks
+      whether that named account is in requester_controls_accounts. If the
+      policy names badly, the eval says so. Under the old column it could not:
+      the answer was already in the data.
+
+      For a legitimate vendor requester_controls_accounts is all of their
+      accounts. For an attacker it is the accounts they planted, which is empty
+      in every scenario except the planted-account one.
+
+      ── New scenarios, and the column each one exists to exercise ───
+
+        legit_group_shared_account   two vendors, one declared group, one shared
+                                     account. REJECTED TODAY. group_id.
+        legit_second_account         vendor with 2-3 accounts, payout to a
+                                     non-primary one. Held forever today.
+        legit_added_then_paid        an account added by an earlier accepted
+                                     request, then paid. Makes ADD vs REPLACE
+                                     testable end to end for the first time —
+                                     the distinction R4's design rests on.
+        fraud_planted_account        THE V2.6 ATTACK. Attacker got account B onto
+                                     the master earlier (added_via=email_request,
+                                     verified_by=unverified, recent, zero settled
+                                     payouts), now requests C and can penny-drop
+                                     from B. requester_controls_accounts=[B].
+        fraud_first_contact          a vendor with no history at all. Nothing to
+                                     compare against, and holding is correct.
+        fraud_thread_hijack          a reply inside a real thread. Exists for
+                                     V2.3; nothing reads it before then.
+
+      fraud_planted_account is the one that matters most, because it is the only
+      case in the corpus that will exercise the guard V2.1 added — a case that
+      recommends rejection AND passes a channel. Until it exists, that guard is
+      asserted by two constructed tests and measured by nothing.
+
+      ── Deliberately NOT in this schema ─────────────────────────────
+
+        per-payout settlement rows          see above
+        account closure / reopening dates   status covers what the rules read
+        a vendor-master audit log           the recursive problem README names;
+                                            it is a v3 control, not a column
+        message threading beyond a thread id V2.3 decides its own shape
+
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES
+
+      (2.1 and 2.5 are DONE — Phase 1. 2.S is the schema decided in Phase 2.)
 
       block                       2.1  2.5  2.0  2.6  2.2  2.3
       1  Entry (webhook)           -    -    -    -   rew  rew
@@ -457,7 +949,46 @@ V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES
       generalisation gap would be indistinguishable from a distribution mismatch
       we created ourselves.
 
-V2.4  FRESH HOLDOUT. New seed, and add the scenarios v1 lacks: corporate
+V2.4  ── DONE (Phase 6). Scored once, 249 cases, the full split.
+
+        metric        v2 dev   v2 holdout   null      v1 holdout
+        recall         100.0%      100.0%   100.0%        100.0%
+        precision       85.9%       84.9%    84.3%         82.2%
+        false BLOCK      0.0%        0.0%     0.0%          2.2%
+        held            78.4%       77.9%   100.0%         52.0%
+        false hold      14.9%       16.0%    16.8%             —
+
+      End to end on all 249 with the live model: recall 100.0%, precision
+      84.9%, false BLOCK 0.0% — IDENTICAL to the perfect-extraction bound,
+      agreeing on the rule fired in 99.6% of cases. Zero extraction failures.
+      Intent 100%, scope 100%, action 99.2%.
+
+      The extractor cost NOTHING in outcomes, on both splits, through a
+      provider it had never run on. That is now the third time this has been
+      measured and it remains the most stable component in the system.
+
+      THE V1 DEFECTS, on ground nothing was tuned against:
+        corporate group sharing an account      12/12 allowed  (v1: REJECTED)
+        legitimate second account               10/10 allowed  (v1: held forever)
+        account added by an earlier request      8/8  allowed  (v1: unrepresentable)
+        attacker drops from a planted account   12/12 held     (v1: RELEASED)
+
+      60 holds carry a rejection recommendation and NONE is legitimate.
+      Channel 2 was unavailable on 24 cases (9.6%), all escalated, none falling
+      back to the callback.
+
+      AND THE PART THAT MUST NOT BE DRESSED UP. Precision 84.9% against a null
+      baseline of 84.3%; false hold 16.0% against 16.8%. On ACCURACY the rule
+      table is barely distinguishable from holding every payout and phoning
+      every vendor. v2 did not change that and was never going to: the value is
+      the release rate (22.1% need no call), the triaged queue, and the
+      elimination of the 2.2% of legitimate traffic v1 rejected outright.
+
+      Recall of 100% on both splits is a CEILING, not a result — the dataset
+      cannot fail. A corpus authored by the same people who wrote the rules
+      shares their blind spots.
+
+      Original scope: FRESH HOLDOUT. New seed, and add the scenarios v1 lacks: corporate
       groups legitimately sharing an account (see V2.0(a) — this one is
       reproducible today), vendors with two or three legitimate accounts,
       a payout to an account added by an earlier accepted request, first-contact
@@ -473,7 +1004,15 @@ V2.4  FRESH HOLDOUT. New seed, and add the scenarios v1 lacks: corporate
       against. That is a smaller claim than "fresh holdout" implies and it is
       the true one.
 
-V2.5  Also carry over from the v1 holdout finding: account_status=inactive
+V2.5  ── DONE (Phase 1), not yet committed. check_account_status() returns
+      INCONCLUSIVE for inactive. Effect on dev: R3 fired 93 -> 86, R4 56 -> 58,
+      and BOTH legitimate cases v1 rejected left the adverse set entirely — the
+      144 remaining recommendations are all fraud. So the two fixes are
+      independent and both real: V2.5 removed the CAUSE of the false rejections,
+      V2.1 removed the MECHANISM, and only the second makes it impossible for a
+      future false positive to reach a rejection unattended.
+
+      Original entry: carry over from the v1 holdout finding: account_status=inactive
       should be INCONCLUSIVE, not FAIL. It caused ALL FIVE false blocks across
       both splits, occurs on 2.0% of cases in both, and is UNCORRELATED with
       fraud (dev 7 fraud/4 legit; holdout 2 fraud/3 legit). It was a P0.2

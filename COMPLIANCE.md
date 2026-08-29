@@ -58,6 +58,28 @@ endpoint is a change in one file rather than an architectural rewrite.
 
 That was not originally a compliance decision. It is one now.
 
+**And it is no longer only a claim.** The provider is now configuration rather
+than code — `PAYEEPROOF_BASE_URL`, `PAYEEPROOF_API_KEY`, `PAYEEPROOF_MODEL` and
+`PAYEEPROOF_PROVIDER` — and the switch has actually been exercised: the v2
+extraction corpus was produced through a different provider than v1's, running
+the same weights, with no change to the prompt, the rules, or any other file.
+Pointing `PAYEEPROOF_BASE_URL` at a self-hosted endpoint inside India is the
+same operation, and nothing in the codebase distinguishes the two cases.
+
+Two consequences worth stating precisely:
+
+- **Portability is a property of the model, not of good intentions.** Every
+  closed, hosted-only alternative considered would have ended this option
+  permanently, because a model nobody can run is a model nobody can run
+  in-country. Choosing an open-weight model is what keeps the mitigation
+  available, and it is the reason the provider change cost nothing.
+- **The audit record now names the host, not just the model.** An open-weight
+  model is served by many companies, and one routing layer moved between ~18 of
+  them mid-evaluation. `ExtractionResult.served_by` records which company
+  actually ran the model for each decision, because "gpt-oss-120b decided this
+  payout" does not identify a data processor — and under DPDP, naming the
+  processor is the point.
+
 ---
 
 ## What the design already satisfies

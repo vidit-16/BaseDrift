@@ -54,11 +54,13 @@ Vendor master   FAV replay    Change lineage    Cross-contact
                     |
         Deterministic policy engine        <- no LLM here
                     |
-        ALLOW  /  STEP_UP_VERIFY  /  BLOCK
+            ALLOW  /  STEP_UP_VERIFY
+                    |            \
+                    |         (+ recommended_action="reject")
                     |
    POST  /v1/payouts/{id}/approve   {"remarks": ...}
-   POST  /v1/payouts/{id}/reject    {"remarks": ...}
-   PATCH /v1/fund_accounts/{id}     {"active": false}
+   POST  /v1/payouts/{id}/reject    {"remarks": ...}    <- human confirms
+   PATCH /v1/fund_accounts/{id}     {"active": false}   <- human confirms
                     |
               Audit trail
 ```
@@ -66,10 +68,19 @@ Vendor master   FAV replay    Change lineage    Cross-contact
 **The LLM never decides.** It converts unstructured communication into structured
 semantic evidence; a deterministic rule engine makes the money decision.
 
+**And neither does the rule engine reject anything.** The harshest outcome it can
+reach on its own is a hold. Rules that once rejected now attach
+`recommended_action="reject"`, and both the reject and the fund-account
+deactivation are emitted flagged `requires_human_confirmation`. This costs
+nothing in capture — a rejection prevents no fraud a hold does not, because the
+money stays put either way — and it removes the only customer-facing failure the
+system had. A hold costs a phone call; a rejection costs a vendor their payment.
+
 Stated as the property that is actually enforced and tested: **an ALLOW always
 requires the payout's real destination account to match the vendor master.** No
 combination of model output can produce one on its own. The worst a hostile or
-mistaken extraction can achieve is downgrading a BLOCK to a hold — never a release.
+mistaken extraction can achieve is downgrading a rejection recommendation to a
+plain hold — never a release.
 
 This was not true until recently. R2 used to return ALLOW on the intent label alone,
 before any identity check ran. See [What the audit found](#what-the-audit-found).
@@ -202,7 +213,7 @@ everything else. Rule R2 already encodes the right policy:
 |---|---|---|
 | a known account for this vendor | ALLOW | nothing changed; nothing to authorize |
 | an account never seen before | HELD | money moving somewhere new with nothing authorizing it |
-| an account on file for another vendor | BLOCK | cross-contact reuse |
+| an account on file for another vendor | HELD + recommend reject | cross-contact reuse |
 
 The handler decides nothing itself. It gathers evidence and calls `decide()`.
 
@@ -444,6 +455,15 @@ both channels catches sim-swap too. So the rules' measurable contribution revert
 to what it was before: the same capture at **half the verification cycles** —
 52.7% against 100%.
 
+**FIXED IN v2 (uncommitted working tree).** The limitation below is the v1
+behaviour and the reason for the rebuild. `vendor_accounts.csv` now carries each
+account with its own provenance — `added_via`, `verified_by`,
+`settled_payout_count` — `build_account_index()` returns a set of owners rather
+than overwriting, and `group_id` distinguishes a declared corporate group from
+the mule pattern. Measured on the v2 dev split: corporate groups sharing an
+account are allowed (21 of 22), and a payout to a legitimate second account is
+allowed (21 of 21) where v1 held it on every payout, forever.
+
 **The vendor master holds one account per vendor, and real ones do not.**
 `VendorRecord` has an `additional_accounts` field and `all_known_accounts()`
 reads it — but nothing populates it, no CSV column carries it, and all 120
@@ -601,13 +621,72 @@ has to be set deliberately.
 
 ---
 
-## The held-out result
+## The held-out result — v2
 
-Scored once, at the end, as committed. **244 cases**, rules-only (the
-perfect-extraction upper bound), plus **112 of those 244** end to end with the
-live model before the daily token quota stopped it.
+Scored once, at the end, as committed. **249 cases, the full split**, both
+rules-only and end to end with the live model. v1's holdout is kept below it for
+comparison, with the caveat that the two are not the same corpus.
 
-| | dev (556) | **holdout (244)** | holdout end-to-end (112) |
+| | v2 dev (551) | **v2 holdout (249)** | null baseline |
+|---|---|---|---|
+| recall | 100% | **100%** | 100% |
+| precision | 85.9% | **84.9%** | 84.3% |
+| **false BLOCK** | 0.0% | **0.0%** | 0.0% |
+| held | 78.4% | **77.9%** | 100% |
+| false hold | 14.9% | **16.0%** | 16.8% |
+
+End to end, with the real model on all 249: **recall 100%, precision 84.9%,
+false BLOCK 0.0%** — identical to the perfect-extraction upper bound, agreeing
+on the rule fired in **99.6%** of cases. Zero extraction failures. Intent 100%,
+scope 100%, action 99.2%; the two misreads are both `ADD` read as `REPLACE` and
+neither changes an outcome.
+
+**The three v1 defects stay closed on data nothing was tuned against:**
+
+| scenario | v1 behaviour | v2 holdout |
+|---|---|---|
+| corporate group sharing an account | **rejected** | 12/12 allowed |
+| vendor's legitimate second account | held on every payout, forever | 10/10 allowed |
+| account added by an earlier accepted request | could not be represented | 8/8 allowed |
+| attacker penny-drops from a planted account | **channel 2 confirms the fraud** | 12/12 held |
+
+**And the customer-facing failure is gone.** v1 rejected **2.2%** of legitimate
+holdout traffic outright. v2 rejects nothing at all — not as an accuracy result
+but *by construction*, because no rule can reach a rejection any more. The 60
+holds that carry a rejection recommendation are **all fraud**; none is
+legitimate.
+
+### Read these numbers honestly
+
+**Precision 84.9% against a null baseline of 84.3%, and false hold 16.0%
+against 16.8%.** On accuracy, the rule table is barely distinguishable from
+holding every payout and phoning every vendor. That was true in v1 and it is
+still true, and no amount of work in v2 changed it.
+
+What the rules actually buy is the **release rate**: 22.1% of payouts clear with
+no phone call at all, and the holds are triaged rather than being one pile — a
+BEC case and a routine unfamiliar-account hold are distinguishable in the queue.
+
+**Recall of 100% is a ceiling, not a result.** It means the dataset cannot fail,
+not that the system cannot. A synthetic corpus authored by the same people who
+wrote the rules will share their blind spots; a fraud pattern neither the
+scenarios nor the rules imagine appears in neither.
+
+**What a "fresh" holdout can honestly claim.** v1's holdout was seen, and what
+it showed shaped v2 — the `inactive` fix and the no-reject decision both came
+from reading it. A new seed does not un-see that. What it buys is that the parts
+of v2 that matter most — multi-account vendors, corporate groups, the
+verification account, the planted-account attack — are tested on ground nothing
+has ever been tuned against. That is a smaller claim than "fresh holdout"
+implies, and it is the true one.
+
+<details>
+<summary>v1's holdout, for comparison</summary>
+
+**244 cases**, rules-only, plus **112 of those 244** end to end with the live
+model before the daily token quota stopped it.
+
+| | v1 dev (556) | **v1 holdout (244)** | v1 end-to-end (112) |
 |---|---|---|---|
 | recall | 100% | **100%** | **100%** |
 | precision | 86.0% | **82.2%** | 79.0% |
@@ -632,8 +711,10 @@ It was our own overcorrection: `account_status` had previously been read by
 
 **It is deliberately not fixed.** The holdout has been opened, and changing a
 rule in response to what it showed would turn this into a development number.
-It is the first item in the v2 scope in NOTES.md, to be measured against a
-fresh holdout.
+It was the first item in the v2 scope, and V2.5 fixed it — see the v2 result
+above, where false blocks are 0.0% on both splits.
+
+</details>
 
 ---
 
