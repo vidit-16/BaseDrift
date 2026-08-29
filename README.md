@@ -573,6 +573,73 @@ has to be set deliberately.
 
 ---
 
+## The held-out result
+
+Scored once, at the end, as committed. **244 cases**, rules-only (the
+perfect-extraction upper bound), plus **112 of those 244** end to end with the
+live model before the daily token quota stopped it.
+
+| | dev (556) | **holdout (244)** | holdout end-to-end (112) |
+|---|---|---|---|
+| recall | 100% | **100%** | **100%** |
+| precision | 86.0% | **82.2%** | 79.0% |
+| step-up | 52.7% | **52.0%** | — |
+| false BLOCK | 0.6% | **2.2%** | 1.6% |
+
+**Capture and operational cost generalised.** 100% of fraud held on unseen data,
+and the step-up rate moved 0.7 points. On the 112 scored end to end, the real
+model produced **identical outcomes to perfect extraction**, agreeing on the
+rule fired in 97.3% of cases — the extractor cost nothing on data it had never
+seen.
+
+**Precision degraded, and the cause is a single defect.** All five false blocks
+across both splits have one origin: `account_status = inactive` routed to a
+Tier-1 FAIL and therefore a rejection. FAV reports inactive on 2.0% of cases in
+both splits and it is **uncorrelated with fraud** (dev 7 fraud / 4 legit;
+holdout 2 fraud / 3 legit), so it rejects legitimate traffic for a signal that
+carries no fraud information.
+
+It was our own overcorrection: `account_status` had previously been read by
+*nothing*, and the fix made it a hard conflict rather than a reason to hold.
+
+**It is deliberately not fixed.** The holdout has been opened, and changing a
+rule in response to what it showed would turn this into a development number.
+It is the first item in the v2 scope in NOTES.md, to be measured against a
+fresh holdout.
+
+---
+
+## How often does this actually fire?
+
+Worth being concrete, because the answer is *not* "constantly", and the case for
+the system does not rest on volume.
+
+A vendor's bank details change perhaps once every few years. At roughly 0.2% of
+payouts carrying a destination change:
+
+| payouts/day | change requests | auto-allowed | held, real | held, false |
+|---|---|---|---|---|
+| 1,000 | 2 | 998 | 0.04 | 0.2 |
+| 20,000 | 40 | 19,960 | 0.8 | 4.8 |
+
+**One real attempt every few weeks, even at scale.** A person could make those
+phone calls. The argument for this system is not that a human cannot keep up —
+it is that **a human does not know which call to make.** BEC works precisely
+because the message looks routine; the clerk skips the call because nothing
+seemed wrong, not because they were busy.
+
+So the value is enforcement, not throughput: the payout is held by default and
+something has to actively release it. `"Our quarter closes Friday"` is written
+to make a person skip the check. A rule engine does not feel deadlines.
+
+This also reframes precision. At these volumes you hold roughly five legitimate
+requests for every fraudulent one — a ratio that sounds alarming and amounts to
+one unnecessary phone call every few days. **Absolute volume is the operational
+metric here, not the ratio**, which is also why the hold-versus-reject
+distinction matters so much: holding costs a call, rejecting costs a vendor.
+
+---
+
 ## What is real and what is simulated
 
 Stating this plainly because the difference is easy to blur, and a fraud control

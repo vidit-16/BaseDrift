@@ -206,3 +206,101 @@ Then:
    asserting on it would be flaky by construction.
 7. DONE — dashboard. GET / and /case/{payout_id}, mounted on the webhook app.
 8. holdout run (once) + pitch video
+
+═══════════════════════════════════════════════════════════════════════
+V2 SCOPE — decided with evidence, NOT to be built before v1 ships
+═══════════════════════════════════════════════════════════════════════
+
+The v1 holdout is spent. Everything below changes rules, so it needs a FRESH
+holdout from a new seed — and that holdout should also carry the inbox threat
+scenarios, otherwise it resamples the same distribution and tests nothing new.
+
+V2.1  STOP REJECTING AUTOMATICALLY.  Measured on dev, 556 cases:
+
+        policy                              recall  falseBLK  rejects  holds
+        reject on any Tier 1 FAIL (v1)      100.0%      0.6%      149    130
+        reject only on cross-contact reuse  100.0%      0.0%       34    244
+        never reject                        100.0%      0.0%        0    278
+
+      Removing BLOCK costs NOTHING in capture. Not one fraud case is released,
+      because BLOCK never stops fraud a HOLD would not also stop — the money
+      does not move either way. BLOCK buys operational convenience only, and
+      pays for it with the single customer-facing failure the system has.
+
+      Restricting rejection to cross-contact reuse also reaches 0.0%, but that
+      is partly a dataset artifact: decision_engine already notes that RazorpayX
+      permits one account under multiple contacts, which is LEGITIMATE for
+      corporate groups. The generator has no shared-account scenario, so that
+      false-positive path is untested rather than absent. Add it in v2.
+
+      Recommended: no automatic rejection at all. A human confirms every one.
+      This is the same principle already applied to fund-account deactivation
+      (requires_human_confirmation); v1 only half-applied it.
+
+      Cost at real volume: a handful of extra holds per day. See the volume
+      model — even 20,000 payouts/day yields ~40 change requests.
+
+V2.2  TRIAGE — and most of it is NOT an agent.
+
+      Today POST /documents is hand-fed a vendor_id. A real AP inbox is ~500
+      messages/day of invoices, chasers, statements, internal mail and spam,
+      and nobody has done that routing.
+
+        INBOX ~500/day
+          [RULES]  ingest: dedupe by message-id, drop auto-replies,
+                   no-reply senders, extract attachments        -> ~400
+          [RULES]  vendor resolution: sender domain vs vendor master
+                   OR a lookalike of one OR a known contact name -> ~30
+          [1 CALL] relevance + intent: is a destination change asked for? -> ~3
+          [AGENT]  investigation, ONLY for the residual few
+          [DET]    existing decision engine
+
+      Vendor resolution does ~90% of the filtering and needs NO model. A
+      classification call is a classifier, not an agent. Putting an agent in
+      the hot path of every inbound email is expensive and non-deterministic
+      for no benefit.
+
+      TRAP: filtering on "sender domain is in the vendor master" drops the
+      fraud. A typosquat is BY DEFINITION not in the master. Stage B must be
+      "in the master OR a lookalike of something in it" — reuse
+      decision_engine.is_lookalike_domain(), do not rebuild it.
+
+V2.3  MCP INBOX — a tool layer, not a stage. It appears twice:
+        (1) SOURCE   list_messages / get_message — without it there is no
+            triage input at all.
+        (2) TOOLS    get_thread / search_history / prior_change_requests —
+            called by the investigation agent.
+
+      The agent is the only place with a genuine loop: read, discover it needs
+      history, fetch, re-evaluate. ~3 emails/day reach it, which is what makes
+      an agent affordable there and wasteful upstream.
+
+      HARD CONSTRAINTS, both following from v1's invariants:
+      - Inbox-derived signals are TIER 2 ONLY. "No prior history from this
+        sender" corroborates; it can never establish identity and can never
+        be what releases a payout.
+      - Every MCP tool is READ-ONLY and scoped to one merchant's own mailbox.
+        The agent reads attacker-controlled content while holding tools, so
+        that is a prompt-injection surface by construction. Containment is:
+        read-only tools, narrow scope, and output that can only downgrade a
+        release to a hold — never the reverse.
+
+      What the inbox unlocks that a single message cannot carry: thread depth
+      (first contact vs 40th), thread hijacking (real quoted history, new
+      sender), and change-request history (third bank change this quarter).
+      It does NOT rescue the compromised-mailbox case — the history there is
+      genuine.
+
+V2.4  FRESH HOLDOUT. New seed, and add the scenarios v1 lacks: corporate
+      groups legitimately sharing an account (see V2.1), first-contact fraud,
+      and thread hijacking. Without new scenarios a new seed only resamples
+      the same distribution.
+
+V2.5  Also carry over from the v1 holdout finding: account_status=inactive
+      should be INCONCLUSIVE, not FAIL. It caused ALL FIVE false blocks across
+      both splits, occurs on 2.0% of cases in both, and is UNCORRELATED with
+      fraud (dev 7 fraud/4 legit; holdout 2 fraud/3 legit). It was a P0.2
+      overcorrection — from ignoring the field entirely to treating it as a
+      hard identity conflict. Deliberately NOT fixed in v1 because the holdout
+      was already open and tuning against it would have invalidated the result.
+
