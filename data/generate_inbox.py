@@ -245,7 +245,9 @@ def main():
         messages = build_inbox(split)
         path = os.path.join(HERE, f"inbox_{split}.csv")
         with open(path, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=list(messages[0].keys()))
+            # LF, for the same reason as generate_data.write_csv.
+            w = csv.DictWriter(f, fieldnames=list(messages[0].keys()),
+                               lineterminator="\n")
             w.writeheader()
             w.writerows(messages)
 

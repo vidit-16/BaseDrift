@@ -1040,7 +1040,15 @@ def write_csv(path, rows):
     if not rows:
         return
     with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        # The explicit LF terminator is NOT cosmetic. csv.writer defaults to
+        # CRLF, git stores these blobs as LF, and Windows autocrlf hides the
+        # mismatch by normalising both sides of every comparison. On Linux
+        # nothing normalises, so a regenerated file differed from the committed
+        # one byte for byte and CI's "committed data still matches the
+        # generator" step failed on every push — while passing locally the
+        # whole time, which is the worst shape a check can have.
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()),
+                                lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 

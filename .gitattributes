@@ -1,0 +1,10 @@
+# Pin line endings so a regenerated corpus is byte-identical on every platform.
+#
+# Without this, git's autocrlf on Windows normalised both sides of a comparison
+# and hid a real mismatch: the blobs are LF, csv.writer emitted CRLF, and on
+# Linux the two genuinely differed. CI's "committed data still matches the
+# generator" step failed on every push while passing locally, which is the
+# worst shape a check can have — it was telling the truth and nobody local
+# could reproduce it.
+* text=auto eol=lf
+*.csv text eol=lf
