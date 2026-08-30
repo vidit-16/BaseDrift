@@ -646,10 +646,9 @@ V2.T  WHAT PHASE 5 PRODUCED — TRIAGE AND THE INBOX  (V2.2, V2.3: DONE)
       is exactly the shape of defect this project keeps finding in itself, so it
       is wired to be evaluable and labelled as not yet evaluated.
 
-      Also unevaluated: the triage CLASSIFIER stage. Without an API key it falls
-      back to the deterministic pre-read, so the 2,367 routed messages include
-      1,816 noise messages the model would be expected to remove. The eval
-      prints that as a floor rather than a result.
+      The triage CLASSIFIER stage was also unevaluated. It no longer is — see
+      V2.C above, where it is measured and comes out costing about six times
+      what it saves while adding nothing to recall.
 
 V2.7  THE PROVIDER IS CONFIGURATION, NOT CODE  (DONE, Phase 6 prep)
 
@@ -781,6 +780,87 @@ V2.B  THE CORPUS WAS GENERATED WRONG, AND EVERY TEST PASSED
       is a different dataset rather than a second look at the same one. But
       "scored once" is a claim this project makes, so the exception is recorded
       rather than quietly absorbed.
+
+V2.C  TRIAGE STAGE 4, MEASURED — AND IT DOES NOT PAY FOR ITSELF
+
+      The classifier was the last thing in v2 carrying a label instead of a
+      number. It now has one, and the number is bad. Recorded here rather than
+      quietly kept, because a component that survives only by being unmeasured
+      is the exact defect this project keeps finding.
+
+      405 messages, stratified across all seven populations that reach stage 4,
+      scored against the deterministic pre-read it replaces.
+
+        approach      prec   recall     F1     FN     FP
+        pre-read     26.6%   100.0%   42.0%     0    138
+        classifier   32.1%   100.0%   48.5%     0    106
+
+      RECALL IS 100% FOR BOTH. The model catches nothing the free check misses.
+      Its entire contribution is precision — 32 fewer messages sent to
+      extraction out of 405 — and that is a cost saving, not a capability.
+
+      SO PRICE THE COST SAVING. Projected onto the full dev inbox using the
+      per-population rates:
+
+        classifier calls spent    4936
+        extractions avoided        395
+
+      4,936 model calls to avoid 395. A classifier call is roughly half an
+      extraction call in tokens (~390 prompt against the extractor's 917, with
+      a shorter completion), so call it ~2,470 extraction-equivalents spent to
+      save 395. A SIX-FOLD NET LOSS, and 12x by call count.
+
+      Stage 4 is not a filter that pays for itself. On this corpus it is a tax.
+
+      WHERE THE ERRORS ACTUALLY ARE
+        corpus:ADD/NONE/REPLACE   100% both — every real case routes, both ways
+        noise:chaser, logistics   100% both
+        noise:invoice             44.6% model / 40.3% pre-read   n=1719
+        noise:statement           47.3% model /  0.0% pre-read   n=678
+
+      Two populations carry all of it, and both for the same reason: invoices
+      and statements REPRINT STANDING BANK DETAILS, because real ones do. The
+      prompt says so explicitly — "an attached invoice that merely reprints
+      standing bank details is not a message about the destination" — and the
+      model still routes 55% of them. The instruction does not land.
+
+      Statements are the one place the model clearly beats the baseline, 47.3%
+      against 0.0%, because the pre-read has no way to distinguish them at all.
+      That is a real gain on 678 messages and it does not come close to paying
+      for 4,936 calls.
+
+      THE INSIGHT THE NUMBERS POINT AT, not yet built
+      -----------------------------------------------
+      The discriminator here is not semantic. An invoice or statement quoting
+      the account the vendor ALREADY HAS ON FILE is restating, not requesting —
+      and stage 3 has already resolved the vendor, so that check is a vendor
+      master lookup. Free, deterministic, and aimed exactly at the two
+      populations that carry every error.
+
+      NOT IMPLEMENTED, because it needs a question answered first: it would
+      also drop the 115 corpus follow-ups, which quote a known account too. That
+      may be FINE — webhook.no_document_evidence() already returns
+      INTENT_FOLLOWUP / ACTION_NONE, which is precisely what a follow-up
+      document asserts, so R2a, R2b and R2c fire identically whether the
+      message was read or not. What is lost is Tier 2 evidence from the
+      document: sender domain, GSTIN, pressure signals.
+
+      Whether that loss matters is measurable against rules_eval and has not
+      been measured. Deciding it from the armchair is how the last three
+      defects in this file got written.
+
+      WHAT THIS DOES NOT SAY
+      ----------------------
+      Not that classification is useless — that statements result is real. Not
+      that a cheaper or better-prompted model would fail: neither was tried,
+      and both are obvious next steps. And the noise here is authored, so the
+      populations are cleaner than an AP inbox.
+
+      What it does say is that the version that shipped, measured on the corpus
+      it ships with, costs about six times what it saves and adds nothing to
+      recall. Stage 4 stays in the code because it is now evaluable and the
+      alternatives are worth trying against it. It should not be described as
+      part of the working funnel until one of them beats the free check.
 
 V2.S  THE SCHEMA, DECIDED IN FULL BEFORE THE GENERATOR RUNS (Phase 2)
 

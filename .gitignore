@@ -12,3 +12,6 @@ data/cases_holdout.csv
 # Derived extraction results. Keyed by email hash + model + prompt hash,
 # so a stale entry could outlive the prompt that produced it.
 eval/.extraction_cache/
+
+# Same, for triage stage 4. Keyed by message hash + model + CLASSIFIER_PROMPT_HASH.
+eval/.classifier_cache/

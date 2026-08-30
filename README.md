@@ -173,6 +173,9 @@ tests/                  217 tests across 7 suites, none needing an API key
 eval/rules_eval.py      decision-engine scoring vs baselines, no API key needed
 eval/triage_eval.py     inbox funnel scoring, including the allowlist
                         counterfactual. No API key needed
+eval/triage_classifier_eval.py
+                        stage 4 measured against the free pre-read it
+                        replaces. Needs a key; cached and resumable
 eval/extraction_eval.py what the extractor actually recovers, with caching
 eval/ablation.py        semantic vs keyword ablation (needs a key)
 data/render.py          case -> email renderer; leakage guard is a hard failure
@@ -269,6 +272,7 @@ Then the steps that cost API calls:
 ```
 python src/pipeline.py                      # the hero case, one call
 python eval/extraction_eval.py --split dev  # 552 calls, ~$0.09
+python eval/triage_classifier_eval.py       # 405 calls, ~$0.05
 python eval/ablation.py                     # semantic vs keyword ablation
 ```
 

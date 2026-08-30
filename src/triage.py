@@ -253,6 +253,70 @@ def resolve_vendor(msg: "Message",
 
 # ── Stage 4: classification ───────────────────────────────────────────
 
+# ── The classifier ────────────────────────────────────────────────────
+
+CLASSIFIER_PROMPT = """You triage an accounts-payable inbox for a company that pays suppliers.
+
+Decide ONE thing about the message below: does it state, request, confirm, or
+dispute WHERE this supplier's money should be sent?
+
+Answer yes if the message concerns the payment destination itself — asking for
+it to change, describing a new arrangement, or restating the existing details
+while chasing a payment.
+
+Answer no if the message is ordinary correspondence that happens to travel with
+payment information: an invoice being submitted, a delivery or scheduling note,
+internal company mail, or unsolicited marketing. An attached invoice that merely
+reprints standing bank details is not a message about the destination.
+
+Judge only what this message says. Do not guess at intent behind it, and do not
+consider whether it looks suspicious — that is decided elsewhere, from evidence
+you do not have.
+
+Return JSON only:
+{"concerns_destination": true or false, "reason": "<one short clause>"}"""
+
+# Recorded alongside every verdict, like the extractor's. A prompt change that
+# is not visible in the eval's provenance is a silent change to what was
+# measured.
+CLASSIFIER_PROMPT_HASH = "af9307b4b87e"
+
+
+def make_classifier(model=None, max_tokens=1400):
+    """
+    An LLM-backed stage 4, in the shape classify() expects: a callable taking a
+    Message and returning a dict.
+
+    Injected rather than imported so triage stays testable without a key, and
+    so the deterministic pre-read remains the documented fallback rather than a
+    degraded mode nobody notices.
+
+    Note what the prompt does NOT contain: any list of the message KINDS in the
+    corpus. Naming invoices, chasers, delivery notes and spam would teach the
+    classifier the generator's own taxonomy, and the eval would then measure
+    how well the prompt was fitted to the test set. It asks the operational
+    question instead.
+    """
+    import llm_client
+
+    def classifier(msg: "Message"):
+        meta = {}
+        parsed, err = llm_client.call_json(
+            CLASSIFIER_PROMPT,
+            f"From: {msg.from_addr}\nSubject: {msg.subject}\n\n{msg.body}",
+            model=model, max_tokens=max_tokens, meta=meta)
+        if err:
+            raise RuntimeError(err)
+        return {
+            "is_change_request": bool(parsed.get("concerns_destination")),
+            "reason": str(parsed.get("reason", ""))[:200],
+            "model": meta.get("model"),
+            "served_by": meta.get("served_by"),
+        }
+
+    return classifier
+
+
 # Deterministic pre-read. This is NOT the classifier — it is the cheap check
 # that decides whether the classifier is worth calling, and it is deliberately
 # generous: it errs toward calling the model, because a false NOT_A_CHANGE here

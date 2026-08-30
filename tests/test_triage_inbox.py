@@ -209,6 +209,67 @@ def test_the_classifier_is_not_called_when_the_pre_read_finds_nothing():
     assert calls == []
 
 
+# ══ Stage 4, the model-backed classifier ══════════════════════════════
+
+def test_the_classifier_prompt_does_not_encode_the_corpus_taxonomy():
+    """
+    The leakage trap one layer up from the renderer's.
+
+    If the prompt named the message KINDS the generator emits — invoice,
+    chaser, delivery note, statement, spam — the eval would measure how well
+    the prompt was fitted to the test set, exactly as ablation corpus v1
+    scored a keyword baseline at 92.3% because the triggers were written to
+    match the paraphrases. It asks the operational question instead.
+    """
+    import triage
+    low = triage.CLASSIFIER_PROMPT.lower()
+    for kind in ("chaser", "logistics", "delivery note", "statement of account",
+                 "spam", "auto-reply", "noreply", "no-reply", "internal mail"):
+        assert kind not in low, f"prompt names the generator's {kind!r} category"
+    # And it must not name the labels either.
+    for leak in ("fraud", "legit", "scenario", "is_change_request"):
+        assert leak not in low, f"prompt contains ground-truth vocabulary {leak!r}"
+
+
+def test_the_classifier_prompt_hash_matches_the_prompt():
+    """
+    Provenance. The eval caches by this hash and prints it, so a prompt edited
+    without the hash moving would silently reuse verdicts from the old one.
+    """
+    import hashlib, triage
+    expected = hashlib.sha256(triage.CLASSIFIER_PROMPT.encode()).hexdigest()[:12]
+    assert triage.CLASSIFIER_PROMPT_HASH == expected, (
+        "CLASSIFIER_PROMPT changed without updating CLASSIFIER_PROMPT_HASH; "
+        "cached verdicts from the previous prompt would be reused as if they "
+        "measured this one")
+
+
+def test_the_classifier_never_decides_anything_about_fraud():
+    """
+    Stage 4 decides whether a message is READ. It has no vendor master, no FAV
+    result and no payout, so a verdict about risk would be a guess wearing a
+    structured output.
+    """
+    import triage
+    low = triage.CLASSIFIER_PROMPT.lower()
+    assert "suspicious" in low and "decided elsewhere" in low, (
+        "the prompt should explicitly hand risk to the decision engine")
+    out = triage.classify(msg(), classifier=lambda m: {
+        "is_change_request": True, "reason": "x", "model": "m"})
+    assert set(out[0:1]) <= {True, False}
+    assert "risk" not in str(out).lower()
+
+
+def test_a_classifier_verdict_carries_its_model():
+    """A decision an audit cannot attribute to a model is not auditable."""
+    import triage
+    is_change, reason, model = triage.classify(msg(), classifier=lambda m: {
+        "is_change_request": False, "reason": "an invoice", "model": "some-model"})
+    assert is_change is False
+    assert model == "some-model"
+    assert "invoice" in reason
+
+
 # ══ The MCP inbox ═════════════════════════════════════════════════════
 
 def _server():
