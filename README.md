@@ -141,9 +141,11 @@ Reproduce: `python eval/ablation.py` (the baseline half needs no API key)
 ## Layout
 
 ```
-src/llm_client.py       provider client — the ONLY module that talks to a
-                        provider; model auto-detect, 429 retry, reasoning-model
-                        handling. See "Choosing a provider" below.
+src/llm_client.py       provider client — the only module IN THE DECISION
+                        PATH that talks to a provider; model auto-detect, 429
+                        retry, reasoning-model handling. eval/ablation.py is
+                        standalone and issues its own HTTP, honouring the same
+                        variables. See "Choosing a provider" below.
 src/extractor.py        the only LLM step; semantic layer + claims
 src/decision_engine.py  deterministic policy; full rule table in docstring
 src/verifier.py         two verification channels; names the account the penny

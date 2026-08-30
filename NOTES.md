@@ -692,8 +692,12 @@ V2.7  THE PROVIDER IS CONFIGURATION, NOT CODE  (DONE, Phase 6 prep)
 
       ── The claim this makes testable ───────────────────────────────
       COMPLIANCE.md said llm_client.py is the only module that talks to a
-      provider, so moving inference in-country is a one-file change. True, and
-      never exercised. It is now FIVE ENVIRONMENT VARIABLES and it has been
+      provider, so moving inference in-country is a one-file change. Never
+      exercised, and as written NOT TRUE: eval/ablation.py is deliberately
+      standalone and carried its own hardcoded provider URL. The claim now
+      says "the only module in the DECISION PATH", and ablation reads the same
+      variables — an evaluation that can silently measure a different provider
+      than the system runs on is not evidence about the system. It is now FIVE ENVIRONMENT VARIABLES and it has been
       exercised against a second provider:
 
         PAYEEPROOF_BASE_URL   provider root (default: Groq)

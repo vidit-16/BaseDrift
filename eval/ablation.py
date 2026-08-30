@@ -5,11 +5,14 @@ Proves the LLM layer does semantic normalization, not entity extraction.
 
 Run:
     pip install requests
-    set GROQ_API_KEY=gsk_...        (Windows cmd)
-    $env:GROQ_API_KEY="gsk_..."     (PowerShell)
+    $env:PAYEEPROOF_API_KEY="sk-..."       (PowerShell)
+    $env:PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1"
+  An existing GROQ_API_KEY is still read.
     python ablation.py
 
-This file is self-contained. No other files needed.
+This file is self-contained — no imports from the repo — but it honours the
+same PAYEEPROOF_* variables as src/llm_client.py, so it cannot end up measuring
+a different provider than the system runs on.
 It auto-detects a working Groq model, so model deprecations won't break it.
 """
 
@@ -30,9 +33,21 @@ except ImportError:
 # CONFIG
 # ══════════════════════════════════════════════════════════════════════
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
-CHAT_URL     = "https://api.groq.com/openai/v1/chat/completions"
-MODELS_URL   = "https://api.groq.com/openai/v1/models"
+# Deliberately standalone — this file reproduces the ablation without importing
+# the rest of the repo. But standalone must not mean DIFFERENTLY CONFIGURED: it
+# read a hardcoded Groq URL while the system had moved to another provider, so
+# the two could silently disagree about which model was being measured. Same
+# variables, same defaults, no import.
+API_KEY  = (os.environ.get("PAYEEPROOF_API_KEY", "").strip()
+            or os.environ.get("GROQ_API_KEY", "").strip())
+BASE_URL = os.environ.get("PAYEEPROOF_BASE_URL",
+                          "https://api.groq.com/openai/v1").rstrip("/")
+try:
+    CALL_GAP = float(os.environ.get("PAYEEPROOF_CALL_GAP", 7.0))
+except ValueError:
+    CALL_GAP = 7.0
+CHAT_URL     = f"{BASE_URL}/chat/completions"
+MODELS_URL   = f"{BASE_URL}/models"
 
 # Tried in order. First one available on the account is used.
 # Updated Aug 2026: llama-3.3-70b-versatile was shut down Aug 16 2026.
@@ -449,21 +464,21 @@ def main():
     b_correct, b_total, b_fp, b_err = run("KEYWORD / REGEX BASELINE", keyword_baseline)
 
     # 2. LLM run
-    if not GROQ_API_KEY:
+    if not API_KEY:
         print("!" * 76)
-        print("GROQ_API_KEY is not set — skipping the LLM half.")
+        print("API_KEY is not set — skipping the LLM half.")
         print()
-        print("  PowerShell:  $env:GROQ_API_KEY=\"gsk_...\"")
-        print("  cmd:         set GROQ_API_KEY=gsk_...")
+        print("  PowerShell:  $env:API_KEY=\"gsk_...\"")
+        print("  cmd:         set API_KEY=gsk_...")
         print()
         print("Then run this script again in the SAME window.")
         print("!" * 76)
         return
 
-    print(f"Key detected: {GROQ_API_KEY[:8]}...{GROQ_API_KEY[-4:]}")
+    print(f"Key detected: {API_KEY[:8]}...{API_KEY[-4:]}")
     print("Detecting an available model...")
 
-    model, err = detect_model(GROQ_API_KEY)
+    model, err = detect_model(API_KEY)
     if err:
         print()
         print("!" * 76)
@@ -476,15 +491,15 @@ def main():
         return
 
     print(f"Using model: {model}")
-    print("Pacing at 7s/call to stay under the free-tier rate limit.")
+    print(f"Pacing at {CALL_GAP}s/call.")
     print("14 cases will take about 2 minutes. Let it run.")
     print()
 
     def classify(text):
-        result = llm_classify(text, model, GROQ_API_KEY)
+        result = llm_classify(text, model, API_KEY)
         # Groq free tier: 8000 tokens/min, each call ~900 tokens.
         # ~9 calls/min max, so pace at 7s to stay comfortably under.
-        time.sleep(7.0)
+        time.sleep(CALL_GAP)
         return result
 
     l_correct, l_total, l_fp, l_err = run(f"LLM SEMANTIC LAYER  ({model})", classify)

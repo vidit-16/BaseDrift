@@ -53,8 +53,17 @@ production use.** It is not an engineering preference.
 `openai/gpt-oss-120b`, is **open-weight** — it can be self-hosted, in-country, on
 infrastructure the merchant or its provider controls. A closed API-only model
 would have removed that option entirely. `src/llm_client.py` is the single
-place that talks to a provider, so redirecting inference to a self-hosted
-endpoint is a change in one file rather than an architectural rewrite.
+place the DECISION PATH talks to a provider, so redirecting inference to a
+self-hosted endpoint is a change in one file rather than an architectural
+rewrite.
+
+That qualifier is load-bearing and was missing. `eval/ablation.py` is
+deliberately standalone — it reproduces the ablation without importing the repo
+— and it carried its own hardcoded provider URL, so the claim "the only module
+that talks to a provider" was false as written. It now reads the same
+`PAYEEPROOF_*` variables, which is what actually matters: an evaluation that can
+silently measure a different provider than the system runs on is not evidence
+about the system.
 
 That was not originally a compliance decision. It is one now.
 

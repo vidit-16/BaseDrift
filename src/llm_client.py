@@ -8,8 +8,14 @@ rather than a hunt across the codebase.
 THE PROVIDER IS CONFIGURATION, NOT CODE
 =======================================
 COMPLIANCE.md rests an argument on this file: the pinned model is OPEN-WEIGHT,
-and this is the only module that talks to a provider, so bringing inference
-inside India for RBI payment-data localisation is a one-file change. That claim
+and this is the only module IN THE DECISION PATH that talks to a provider, so
+bringing inference inside India for RBI payment-data localisation is a one-file
+change.
+
+The qualifier matters. eval/ablation.py is deliberately standalone and issues
+its own HTTP; it is not part of the decision path, but it reads the same
+variables below, because an evaluation that can measure a different provider
+than the system runs on is not evidence about the system. That claim
 was true but untested. It is now one ENVIRONMENT VARIABLE, and exercised:
 
   PAYEEPROOF_BASE_URL   provider root, OpenAI-compatible   (default: Groq)
