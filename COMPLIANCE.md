@@ -45,6 +45,21 @@ from anonymisation. Every item below follows from that.
 Extraction currently runs against a US-hosted API. Every call carries payment
 data and vendor personal data across a border.
 
+**And the chain is now two links, not one.** Inference reaches the model through
+a ROUTING layer: `PAYEEPROOF_BASE_URL` points at OpenRouter, which dispatches to
+whichever host serves the model — DeepInfra in the runs behind the reported
+figures. Under DPDP each processor in that chain has to be named and
+contracted, so this is two due-diligence exercises rather than one.
+
+Worse without care: routing is dynamic. The first live call through it was
+served by a host nobody had assessed. Two mitigations exist and both are
+deliberate rather than incidental — `PAYEEPROOF_PROVIDER` pins the host with
+`allow_fallbacks=False`, and `ExtractionResult.served_by` records who actually
+ran each call, so the audit trail names the processor rather than only the
+model. **Pinning is opt-in.** Unpinned, the processor for a given decision is
+whatever the router chose that second, which is not a defensible position for
+regulated data.
+
 Whether that is permissible turns on RBI's payment-data storage rules and the
 DPDP transfer regime. **This is a legal question and must be answered before any
 production use.** It is not an engineering preference.
@@ -144,23 +159,36 @@ effective ways to hide instructions in a document.
 
 Ordered by how much work they are, not how important.
 
-**1. Model and prompt pinning, not auto-detection.**
-`MODEL_PREFERENCE` selects whatever is live. Provenance is now recorded, but a
-regulated decision should be made by a *known* model, changed deliberately. A
-retired model has already caused a silent change once during development.
+**1. Model and prompt pinning, not auto-detection.** *(half-closed)*
+`MODEL_PREFERENCE` still selects whatever is live, and that remains the default.
+`PAYEEPROOF_MODEL` now pins a model id and skips detection entirely, and every
+decision records the model *and* the host that ran it — so the capability exists
+and the provenance is real. What is outstanding is that a regulated deployment
+should have pinning ON, not merely available. A retired model caused a silent
+change once during development, which is the argument.
 
-**2. Retention and erasure.**
+**2. Retention and erasure.** *(surface grew with the inbox work)*
 `raw_llm_output` keeps 1000 characters of the model's parse; the document store
-keeps full email bodies; the audit trail keeps both. All indefinitely, in memory,
-unencrypted. DPDP requires storage limitation and erasure on request, and the
+keeps full email bodies; the audit trail keeps both. The inbox layer added more:
+`InboxServer` holds every message body it serves — 7,176 in the corpus
+configuration — and documents now also carry the inbox signals and triage
+metadata gathered at ingest. All indefinitely, in memory, unencrypted. DPDP requires storage limitation and erasure on request, and the
 audit trail is simultaneously a compliance *requirement* and a personal-data
 *liability*. Those two pull in opposite directions and the retention period has
 to be a stated decision, not a default.
 
-**3. Access control.**
+**3. Access control.** *(worse — a second unauthenticated endpoint)*
 `POST /documents` accepts a document for any vendor from anyone who can reach it.
-The dashboard shows account numbers and vendor identity to anyone who can load
-it. The webhook's HMAC authenticates Razorpay — it does nothing for these two.
+`POST /messages` now accepts a raw message the same way, and is the more
+attractive target of the two: a message posted there is triaged, becomes a
+document, and carries inbox signals into a real payout decision. The dashboard
+shows account numbers and vendor identity to anyone who can load it. The
+webhook's HMAC authenticates Razorpay — it does nothing for any of these three.
+
+Related and not yet built: `INBOX_CURSOR.md` records why message dedupe must key
+on the provider-assigned id rather than the `Message-ID:` header. The header is
+attacker-written, so keying on it would let a sender collide with a processed id
+and have their own change request silently dropped.
 
 **4. Encryption at rest and in transit for the stores.**
 Vendor master, document store and audit trail.
@@ -172,13 +200,25 @@ Breach notification path, a grievance mechanism, and a named contact — require
 of a Data Fiduciary under DPDP, and the merchant will need PayeeProof to support
 them contractually.
 
-**7. Outsourcing controls for the model provider.**
-Due diligence, right to audit, and an exit plan. Model deprecation is a live
-availability risk — `llama-3.3-70b-versatile` was retired during development and
-`MODEL_PREFERENCE` still carries a note saying so.
+**7. Outsourcing controls for the model provider.** *(now two providers)*
+Due diligence, right to audit, and an exit plan — for the routing layer *and*
+for whichever host it dispatches to. See the border section above: unpinned,
+that host is not a fixed entity.
 
-**8. Purpose limitation on inbox access.**
-The planned MCP integration reads the merchant's own AP inbox. Consent and
+The exit plan is the one part in good shape. The model is open-weight and the
+provider is five environment variables, so moving — including to a self-hosted
+in-country endpoint — is configuration. That has been exercised: the v2 corpus
+was produced through a different provider than v1's, with no other file changed.
+
+Model deprecation remains a live availability risk. `llama-3.3-70b-versatile`
+was retired during development and `MODEL_PREFERENCE` still carries a note
+saying so.
+
+**8. Purpose limitation on inbox access.** *(now live, not planned)*
+This is no longer prospective. Triage is wired into the decision path: `POST
+/messages` ingests a raw message, and the inbox signals gathered at that moment
+are stored on the document and reach `decide()` when the payout goes pending.
+The MCP tool layer reads the merchant's own AP inbox. Consent and
 purpose have to be explicit and narrow: fraud control on payout destinations, not
 general correspondence analysis. Inbox-derived signals are also constrained
 technically — Tier 2 only, corroborating and never identity-establishing —
