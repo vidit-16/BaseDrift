@@ -178,10 +178,17 @@ class FundAccount:
 class Store:
     """Fund accounts, vendors and change-request documents."""
 
-    def __init__(self, audit_limit: int = 200):
+    def __init__(self, audit_limit: int = 200, inbox=None):
         self.fund_accounts: Dict[str, FundAccount] = {}
         self.vendors: Dict[str, VendorRecord] = {}
         self.documents: Dict[str, Dict[str, Any]] = {}
+        # The merchant's mailbox, behind the read-only MCP tool boundary. None
+        # means no inbox is connected, and everything still works — a payout
+        # then decides on the vendor master and the document alone, exactly as
+        # it did before triage existed. Inbox evidence is corroborating; the
+        # system must not depend on having it.
+        self.inbox = inbox
+        self._triaged: set = set()
         self._seen_events: Dict[str, float] = {}
         # Decisions were computed and then discarded once the response was
         # written, which left nothing for an operator to review. Bounded and
@@ -228,13 +235,69 @@ class Store:
 
     # -- documents -----------------------------------------------------
     def put_document(self, doc_id: str, vendor_id: str, text: str,
-                     received_at: Optional[float] = None) -> None:
+                     received_at: Optional[float] = None,
+                     inbox_signals=None, triage=None) -> None:
+        """
+        inbox_signals are gathered WHEN THE MESSAGE ARRIVES, not when the payout
+        does, and stored with the document.
+
+        That ordering is the point. "Has this sender written before?" has to be
+        answered against the mailbox as it was at arrival; asking days later,
+        when the payout finally goes pending, would count mail that landed in
+        between and make a first contact look established.
+        """
         self.documents[doc_id] = {
             "document_id": doc_id,
             "vendor_id": vendor_id,
             "text": text,
             "received_at": received_at if received_at is not None else time.time(),
+            "inbox_signals": list(inbox_signals or []),
+            "triage": triage,
         }
+
+    def ingest_message(self, message) -> Dict[str, Any]:
+        """
+        The real front door: a raw message, not a document with a vendor id
+        already attached.
+
+        Triage resolves the vendor with no model call, and only messages that
+        reach ROUTE become documents. Everything else is dropped here and never
+        costs an extraction — which is the whole argument for the funnel.
+
+        A dropped message is NOT a released payout. The payout.pending webhook
+        fires regardless, finds no document, and R2 rules on the real
+        destination: a known account passes, an unseen one holds, another
+        vendor's account still fires R2c. The failure mode of this door is an
+        unnecessary hold.
+        """
+        import triage as triage_mod
+
+        if message.message_id in self._triaged:
+            return {"verdict": triage_mod.DUPLICATE, "document_id": None}
+        result = triage_mod.triage(message, self.vendors, self._triaged)
+
+        if not result.routed:
+            return {"verdict": result.verdict, "stage": result.stage,
+                    "reason": result.reason, "document_id": None}
+
+        signals = []
+        if self.inbox is not None:
+            import investigator
+            inv = investigator.investigate(
+                self.inbox, message, result,
+                is_reply=bool(getattr(message, "in_reply_to", "")))
+            signals = inv.signals
+
+        doc_id = f"doc_{message.message_id.strip('<>').split('@')[0][:24]}"
+        self.put_document(doc_id, result.vendor_id, message.body,
+                          received_at=message.received_at or None,
+                          inbox_signals=signals,
+                          triage={"match": result.match,
+                                  "matched_domain": result.matched_domain,
+                                  "candidates": result.candidates})
+        return {"verdict": result.verdict, "document_id": doc_id,
+                "vendor_id": result.vendor_id, "match": result.match,
+                "inbox_signals": [s.name for s in signals]}
 
     def find_document(self, vendor_id: str,
                       explicit_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -389,9 +452,12 @@ def handle_payout_pending(raw_body: bytes,
     if doc is None:
         ext = no_document_evidence()
         doc_id = None
+        inbox_signals = []
     else:
         ext = extractor_mod.extract(doc["text"])
         doc_id = doc["document_id"]
+        # Gathered at arrival and carried here. See Store.put_document.
+        inbox_signals = doc.get("inbox_signals") or []
 
     # 6. FAV, replayed schema-faithfully. Unavailable resolves to inconclusive,
     #    which the engine already refuses to treat as clean.
@@ -403,7 +469,8 @@ def handle_payout_pending(raw_body: bytes,
     dec = decide(ext, fav, vendor,
                  other_vendor_accounts=store.account_index(),
                  destination_account_number=fa.account_number,
-                 vendors=store.vendors)
+                 vendors=store.vendors,
+                 inbox_signals=inbox_signals)
 
     # Neither channel is attempted inline. The callback is a phone call and the
     # penny drop is a live RazorpayX call that the vendor has to act on — both
@@ -505,6 +572,31 @@ def create_app(store: Optional[Store] = None, fav_lookup=None):
                                 content={"error": "vendor_id and text are required"})
         app.state.store.put_document(doc_id, vendor_id, text)
         return {"document_id": doc_id, "vendor_id": vendor_id}
+
+    @app.post("/messages")
+    async def ingest_message(request: Request):
+        """
+        Where the merchant's mailbox delivers. Unlike /documents this takes a
+        RAW message with no vendor id attached — resolving the vendor is
+        triage's job, and getting it wrong is survivable because the payout,
+        not the email, is what the decision engine trusts for identity.
+        """
+        import triage as triage_mod
+        body = await request.json()
+        if not body.get("body"):
+            return JSONResponse(status_code=400,
+                                content={"error": "body is required"})
+        msg = triage_mod.Message(
+            message_id=body.get("message_id") or f"<{int(time.time()*1000)}@in>",
+            from_addr=body.get("from", ""),
+            subject=body.get("subject", ""),
+            body=body["body"],
+            thread_id=body.get("thread_id", ""),
+            received_at=float(body.get("received_at") or time.time()),
+            headers=body.get("headers") or {},
+            in_reply_to=body.get("in_reply_to", ""),
+        )
+        return app.state.store.ingest_message(msg)
 
     # ── Operator dashboard ────────────────────────────────────────────
     # Deliberately shows what the webhook response does not. See the note at

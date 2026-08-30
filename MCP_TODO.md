@@ -77,6 +77,30 @@ Three properties are real, enforced in code, and asserted by tests:
 - **No model chooses anything.** `inbox_signals.collect()` calls the same three
   tools, in the same order, on every message.
 
+### Fixed since this file was written: the layer was not connected
+
+At the time of writing, `webhook.py` and `pipeline.py` never passed
+`inbox_signals` to `decide()`. The two halves of the system ran without
+touching: the payout path decided without inbox evidence, and the inbox path
+produced signals nothing consumed. `decide()` accepted the argument and no
+caller in the live path supplied it — a capability with nothing behind it, at
+the integration level rather than in the data.
+
+Now wired. `POST /messages` is the front door: it takes a RAW message with no
+vendor id, triage resolves the vendor with no model call, and only messages
+reaching ROUTE become documents. Inbox signals are gathered **at arrival** and
+stored on the document, so the payout decision days later reads the mailbox as
+it stood when the message came in — asking at payout time would count mail that
+landed in between and make a first contact look established. Six tests cover it.
+
+**The reported holdout figures do not include inbox evidence**, and that is
+deliberate rather than an oversight: `rules_eval` calls `decide()` directly on
+the case corpus, which has no mailbox context. Because every inbox signal is
+Tier 2 and can only be WARN or INCONCLUSIVE, adding them can only turn an ALLOW
+into a hold — never the reverse. So the true recall cannot be worse than
+reported and the true hold rate can only be higher. Measuring it properly means
+scoring the holdout a third time and was not worth it.
+
 ---
 
 ## 3. The worked example, for reference
@@ -152,6 +176,16 @@ worth keeping.
 **2. The integration comes for free.**
 Google Workspace and Microsoft 365 MCP servers already exist. Speaking MCP means
 a real mailbox works without writing or maintaining mail-provider code.
+
+**A caveat that belongs with argument 1.** Today the read-only guarantee is
+STRUCTURAL: there is no send function in `mcp/inbox_server.py`, and a test greps
+for write verbs and fails the build if one appears. An injection cannot call a
+write tool because none exists.
+
+Swap to a real mailbox server and that weakens to a CONFIGURATION. The write
+tools exist; you are relying on having disabled them, and on nobody enabling one
+later "just for notifications". Same words — "read-only" — much weaker promise.
+By construction versus by settings. Whatever is chosen, say which one it is.
 
 **3. One agent, many backends.**
 CSV in testing, Gmail at one merchant, Outlook at another, agent untouched. Real,

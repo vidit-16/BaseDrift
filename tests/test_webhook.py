@@ -23,6 +23,11 @@ import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+# Repo root too: the inbox lives in the mcp/ package, and the triage-front-door
+# tests import it before any helper has a chance to extend the path.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+from extractor import ExtractionResult  # noqa: E402
 
 import webhook  # noqa: E402
 from decision_engine import ALLOW, BLOCK, STEP_UP, VendorRecord  # noqa: E402
@@ -296,6 +301,144 @@ def test_new_destination_with_no_document_is_held():
     assert r.outcome == STEP_UP
     assert r.audit["payout_allowed"] is False
     assert r.audit["decision"]["rule_fired"] == "R2b_followup_unverified_destination"
+
+
+# ══ Triage as the front door (V2.2/V2.3 wired into the live path) ═════
+# The inbox half and the payout half used to run without touching: decide()
+# accepted inbox_signals and no caller in the live path supplied any. These
+# assert the connection carries evidence, not merely that it does not crash.
+
+def _inbox(*messages):
+    from mcp import inbox_server as MCP
+    return MCP.InboxServer("MERCH0001", list(messages))
+
+
+def _stored(server=None):
+    import triage as T
+    s = make_store(dest_account=NEW_ACCT)
+    s.inbox = server
+    return s, T
+
+
+def test_a_message_becomes_a_document_without_being_told_the_vendor():
+    """
+    /documents is handed a vendor_id. A mailbox is not. Triage resolving the
+    sender with no model call is what makes the inbox a usable front door.
+    """
+    store, T = _stored()
+    out = store.ingest_message(T.Message(
+        message_id="<m1@x>", from_addr="accounts@balajilogistic.com",
+        subject="INV-1", body=f"Everything reaches {NEW_ACCT} (KKBK0403467) now.",
+        received_at=1000.0))
+    assert out["verdict"] == T.ROUTE
+    assert out["vendor_id"] == VENDOR.vendor_id
+    assert store.documents[out["document_id"]]["vendor_id"] == VENDOR.vendor_id
+
+
+def test_noise_never_becomes_a_document():
+    """The funnel has to actually filter, or it is not a funnel."""
+    store, T = _stored()
+    out = store.ingest_message(T.Message(
+        message_id="<m2@x>", from_addr="offers@quickfundsindia.co",
+        subject="offer", body="Unlock working capital in 24 hours.",
+        received_at=1000.0))
+    assert out["document_id"] is None
+    assert store.documents == {}
+
+
+def test_inbox_evidence_reaches_the_decision_engine():
+    """
+    THE CONNECTION. A first contact from an unknown sender produces an inbox
+    signal at ingest, and that signal has to survive into the payout decision
+    days later — otherwise the whole inbox layer is decoration.
+    """
+    from mcp import inbox_server as MCP
+    store, T = _stored(_inbox(
+        MCP.StoredMessage("<old@x>", "T9", "accounts@balajilogistic.com",
+                          "ap@clientcorp.in", "INV-0", "earlier mail", 10.0)))
+    out = store.ingest_message(T.Message(
+        message_id="<m3@x>", from_addr="ap@balajilogisticsgroupholdings.com",
+        subject="INV-3",
+        body=f"Our GST registration is {VENDOR.gstin}. "
+             f"Everything reaches {NEW_ACCT} (KKBK0403467) now.",
+        received_at=2000.0))
+    assert out["match"] == "content"
+    assert "inbox_first_contact" in out["inbox_signals"]
+
+    doc = store.documents[out["document_id"]]
+    assert [s.name for s in doc["inbox_signals"]] == out["inbox_signals"]
+
+    # Stub the extractor: this test is about the WIRING, and letting it depend
+    # on a live extraction would make it need an API key and go red whenever
+    # another suite leaves a stub behind.
+    import extractor as E
+    real = E.extract
+    E.extract = lambda *a, **k: ExtractionResult(
+        ok=True, intent="BENEFICIARY_CHANGE", action="REPLACE_PAYOUT_DESTINATION",
+        scope="OUTSTANDING_AND_FUTURE", proposed_account_number=NEW_ACCT,
+        proposed_gstin=VENDOR.gstin, sender_domain=VENDOR.known_domain,
+        amount=28000.0)
+    try:
+        r = post(store, event_body(
+            notes={"payeeproof_document_id": out["document_id"]}))
+    finally:
+        E.extract = real
+    names = [s["name"] for s in r.audit["decision"]["tier2"]]
+    assert "inbox_first_contact" in names, names
+    assert r.audit["payout_allowed"] is False
+
+
+def test_inbox_evidence_is_gathered_at_arrival_not_at_payout_time():
+    """
+    Ordering, and it is not cosmetic. "Has this sender written before?" must be
+    answered against the mailbox as it stood when the message arrived. Asking
+    when the payout finally goes pending would count mail that landed in
+    between and make a first contact look established.
+    """
+    from mcp import inbox_server as MCP
+    store, T = _stored(_inbox())
+    out = store.ingest_message(T.Message(
+        message_id="<m4@x>", from_addr="accounts@balajilogistic.com",
+        subject="INV-4", body=f"Everything reaches {NEW_ACCT} (KKBK0403467) now.",
+        received_at=500.0))
+    before = [s.name for s in store.documents[out["document_id"]]["inbox_signals"]]
+
+    # Mail arrives afterwards. The stored evidence must not change.
+    store.inbox._messages.append(
+        MCP.StoredMessage("<later@x>", "T1", "accounts@balajilogistic.com",
+                          "ap@clientcorp.in", "later", "later mail", 9000.0))
+    after = [s.name for s in store.documents[out["document_id"]]["inbox_signals"]]
+    assert before == after
+    assert "inbox_first_contact" in before
+
+
+def test_a_payout_decides_normally_with_no_inbox_connected():
+    """
+    Fail-safe on the whole layer. A deployment with no mailbox must behave
+    exactly as it did before triage existed — inbox evidence corroborates and
+    is never depended on.
+    """
+    store, T = _stored(server=None)
+    out = store.ingest_message(T.Message(
+        message_id="<m5@x>", from_addr="accounts@balajilogistic.com",
+        subject="INV-5", body=f"Everything reaches {NEW_ACCT} (KKBK0403467) now.",
+        received_at=1000.0))
+    assert out["verdict"] == T.ROUTE
+    assert out["inbox_signals"] == []
+    r = post(store, event_body(notes={"payeeproof_document_id": out["document_id"]}))
+    assert r.audit["payout_allowed"] is False
+    assert r.audit["decision"]["rule_fired"]
+    assert r.audit["decision"]["tier2"] is not None
+
+
+def test_the_same_message_is_not_triaged_twice():
+    store, T = _stored()
+    m = dict(message_id="<dup@x>", from_addr="accounts@balajilogistic.com",
+             subject="INV-6", body=f"Pay {NEW_ACCT} KKBK0403467.", received_at=1.0)
+    first = store.ingest_message(T.Message(**m))
+    second = store.ingest_message(T.Message(**m))
+    assert first["verdict"] == T.ROUTE
+    assert second["verdict"] == T.DUPLICATE
 
 
 def test_destination_on_another_vendor_is_held_and_recommended_for_rejection():
