@@ -176,6 +176,8 @@ eval/triage_eval.py     inbox funnel scoring, including the allowlist
 eval/triage_classifier_eval.py
                         stage 4 measured against the free pre-read it
                         replaces. Needs a key; cached and resumable
+eval/base_rates.py      what the measured rates mean per day at real
+                        volumes. No API key needed
 eval/extraction_eval.py what the extractor actually recovers, with caching
 eval/ablation.py        semantic vs keyword ablation (needs a key)
 data/render.py          case -> email renderer; leakage guard is a hard failure
@@ -204,6 +206,7 @@ Everything below this line runs with **no API key**:
 python tests/run_all.py       # 217 tests across 7 suites
 python eval/rules_eval.py     # rule scoring vs baselines
 python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
+python eval/base_rates.py     # daily call volume vs the null baseline
 python src/webhook_demo.py    # five signed scenarios over real HTTP
 ```
 
@@ -874,13 +877,42 @@ above, where false blocks are 0.0% on both splits.
 Worth being concrete, because the answer is *not* "constantly", and the case for
 the system does not rest on volume.
 
-A vendor's bank details change perhaps once every few years. At roughly 0.2% of
-payouts carrying a destination change:
+`python eval/base_rates.py` derives this from the measured corpus rather than
+assuming it. The corpus splits cleanly into traffic that requests a destination
+change and traffic that does not, and the two behave nothing alike:
 
-| payouts/day | change requests | auto-allowed | held, real | held, false |
-|---|---|---|---|---|
-| 1,000 | 2 | 998 | 0.04 | 0.2 |
-| 20,000 | 40 | 19,960 | 0.8 | 4.8 |
+| | n | held |
+|---|---|---|
+| routine payout, no change requested | 167 | **1.2%** |
+| change request, legitimate | 243 | 25.9% |
+| change request, fraudulent | 390 | 100% |
+
+Real traffic is overwhelmingly the first row, and the null baseline holds all of
+it. At 20,000 payouts/day with 0.2% carrying a change:
+
+| per day | PayeeProof | hold everything |
+|---|---|---|
+| released with no call | **19,750** | 0 |
+| held, a human must act | **250** | 20,000 |
+| of those, actually fraud | 0.8 | 0.8 |
+| legitimate payments cancelled | 0 | 0 |
+
+**Both catch every fraud case in this corpus. One asks for 250 phone calls a day
+and the other asks for 20,000.** That factor of 80 is what a precision ratio
+hides: on a corpus that is half fraud the two look three points apart; on
+traffic anyone actually runs, one is a staffed desk and the other is impossible.
+
+**And 250 calls a day is not nothing** — about 21 hours of work, so a team. The
+system does not remove the work, it makes the work possible and points it at the
+right payouts. Fraud is 0.32% of what gets held, which is precisely the ratio at
+which people start rubber-stamping. That the queue is *sorted* — a rejection
+recommendation attached to the cases carrying real evidence — matters more at
+that ratio than any accuracy figure here.
+
+**The weakest input, stated plainly:** the 1.2% routine hold rate rests on **two
+events** across both splits. Every daily figure scales linearly with it and the
+confidence interval is wide. `--routine-hold` overrides it so anyone can see how
+sensitive the conclusion is.
 
 **One real attempt every few weeks, even at scale.** A person could make those
 phone calls. The argument for this system is not that a human cannot keep up —
@@ -897,6 +929,47 @@ requests for every fraudulent one — a ratio that sounds alarming and amounts t
 one unnecessary phone call every few days. **Absolute volume is the operational
 metric here, not the ratio**, which is also why the hold-versus-reject
 distinction matters so much: holding costs a call, rejecting costs a vendor.
+
+---
+
+## What this data does and does not establish
+
+Every number here comes from a corpus this project generated, with scenarios and
+rules written by the same person. That is a real limitation and it cannot be
+argued away, so the useful thing is to be precise about which claims depend on
+the data and which do not.
+
+**Structural — true regardless of what data you run:**
+
+| property | enforced by |
+|---|---|
+| No rule can reject a payout unattended | no `BLOCK` outcome exists in the engine; a test asserts the literal is absent |
+| Inbox evidence can hold a payout, never release one | every inbox signal is WARN or INCONCLUSIVE; `decide()` rejects anything else before any rule runs |
+| The model cannot reach an approve endpoint | it is called once, returns JSON, and holds no tools |
+| The destination checked is the payout's, not the email's | `resolve_destination()`; a blank value returns an error rather than falling back to the claim |
+| A shared account inside a declared group is not the mule pattern | `same_group()` requires a non-empty id, so two blanks never match |
+| Every decision names the model *and* the host that ran it | `served_by` in the audit record |
+| The safe state is inaction | no error path releases a payout; an unconfigured deployment holds everything |
+
+These are properties of the architecture. A different dataset does not move
+them, and a hostile one cannot either.
+
+**Measured on synthetic data — and therefore uncertain:** recall, precision,
+hold rates, the false-hold rate, and every figure in the held-out result above.
+Recall of 100% in particular is a *ceiling*, not an achievement: it says the
+corpus cannot fail, not that the system cannot.
+
+**Measured on hand-written adversarial cases, not generated ones:** the
+[ablation](#the-ablation-result). Its fourteen cases were written to be
+semantically obvious and lexically misleading, and the keyword baseline scores
+0/14 against the model's 14/14. That is the one accuracy claim here that does
+not rest on the generator.
+
+**What would actually strengthen this**, in order: shadow mode against real
+traffic at a willing merchant, which is the only thing that produces a genuine
+false-positive rate; a corpus authored by someone who did not write the rules;
+and a red-team pass by someone trying to get a payout released. None of those is
+a code change, which is why none of them is in this repository.
 
 ---
 

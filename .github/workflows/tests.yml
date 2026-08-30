@@ -46,6 +46,9 @@ jobs:
       - name: Rules eval against baselines
         run: python eval/rules_eval.py
 
+      - name: Base rates project without error
+        run: python eval/base_rates.py
+
       - name: Renderer must not leak the baseline's vocabulary
         run: python eval/extraction_eval.py --leakage-only
 
