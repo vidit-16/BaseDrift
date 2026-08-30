@@ -155,6 +155,9 @@ src/webhook.py          payout.pending handler; signature verification,
                         destination resolution, document correlation
 src/webhook_app.py      ASGI entry point for uvicorn
 src/dashboard.py        operator view: decisions, and the evidence behind each
+src/demo.py             the two-minute demo: one real fraud case carried
+                        end to end through the real code. Runs with or
+                        without an API key and says which
 src/webhook_demo.py     drives the real endpoint over real signed HTTP
 src/triage.py           inbox funnel: dedupe -> ingest rules -> vendor
                         resolution (no model) -> classification
@@ -207,6 +210,7 @@ python tests/run_all.py       # 217 tests across 7 suites
 python eval/rules_eval.py     # rule scoring vs baselines
 python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
 python eval/base_rates.py     # daily call volume vs the null baseline
+python src/demo.py            # THE DEMO — one payout, end to end, ~2 min
 python src/webhook_demo.py    # five signed scenarios over real HTTP
 ```
 

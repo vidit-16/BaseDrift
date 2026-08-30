@@ -59,5 +59,8 @@ jobs:
             exit 1
           fi
 
+      - name: The two-minute demo runs without a key
+        run: python src/demo.py
+
       - name: Signed webhook end to end
         run: python src/webhook_demo.py
