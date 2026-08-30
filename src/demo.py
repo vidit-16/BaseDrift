@@ -23,6 +23,7 @@ import hmac
 import json
 import os
 import sys
+import textwrap
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -60,6 +61,30 @@ def beat(text=""):
     print(f"      {text}" if text else "")
 
 
+def block(text, indent=8):
+    """Pre-formatted output: indent it, never re-wrap it."""
+    pad = " " * indent
+    for line in text.split("\n"):
+        print(f"{pad}{line}" if line else "")
+
+
+def quote(text, indent=8):
+    """
+    The vendor's own words, wrapped.
+
+    A demo is usually read on a projector or a shared screen. The corpus emails
+    run past 180 characters on one line, and the part a viewer most wants to
+    read was the part running off the right edge.
+    """
+    pad = " " * indent
+    for para in text.split("\n"):
+        if not para.strip():
+            print()
+            continue
+        for line in textwrap.wrap(para.strip(), width=W_COL - indent - 2):
+            print(f"{pad}{line}")
+
+
 def use_cached_extraction_if_no_key(case_id):
     """
     With no API key the extractor fails, R1 fires, and the payout is held — a
@@ -89,6 +114,46 @@ def use_cached_extraction_if_no_key(case_id):
     E.extract = lambda *a, **k: X.result_from_dict(payload)
     return (f"cached from the evaluation run "
             f"({meta.get('model', '?')}, {meta.get('extracted_at', '?')[:10]})")
+
+
+def dashboard_preview(store):
+    """
+    The real dashboard HTML, reduced to the rows a viewer would read.
+
+    Printing a URL and hoping uvicorn is already running is a dead end in the
+    middle of a demo. This renders the same function the server does, so what
+    appears here cannot drift from what the browser shows.
+    """
+    import html as _html
+    import re
+    import dashboard
+
+    page = dashboard.render_index(store.recent_audits())
+
+    def cells(row):
+        out = []
+        for td in re.findall(r"<td.*?>(.*?)</td>", row, re.S):
+            txt = re.sub(r"<[^>]+>", " ", td)
+            out.append(re.sub(r"\s+", " ", _html.unescape(txt)).strip())
+        return out
+
+    body = re.search(r"<tbody>(.*?)</tbody>", page, re.S)
+    if not body:
+        return "no decisions recorded yet"
+
+    sub = re.search(r'<div class="sub">(.*?)</div>', page, re.S)
+    lines = []
+    if sub:
+        lines.append(_html.unescape(re.sub(r"<[^>]+>", "", sub.group(1))).strip())
+        lines.append("")
+    lines.append(f"{'payout':13s} {'vendor':9s} {'rule fired':36s} outcome")
+    for row in re.findall(r"<tr>(.*?)</tr>", body.group(1), re.S):
+        c = cells(row)
+        if len(c) < 6:
+            continue
+        payout, vendor, _dest, _doc, fired, outcome = c[:6]
+        lines.append(f"{payout:13s} {vendor:9s} {fired:36s} {outcome}")
+    return "\n".join(lines)
 
 
 def load_case():
@@ -165,10 +230,10 @@ def main():
 
     # ── 2 ────────────────────────────────────────────────────────────
     scene(2, "An email arrives asking to change the bank details.")
-    for line in [f"From: {msg['from_addr']}", f"Subject: {msg['subject']}", ""]:
-        beat(line)
-    for line in msg["body"].split("\n")[:4]:
-        beat(f"  {line}")
+    beat(f"From:    {msg['from_addr']}")
+    beat(f"Subject: {msg['subject']}")
+    beat()
+    quote("\n".join(msg["body"].split("\n")[:4]))
     beat()
     beat(f"The real domain is {v.known_domain}.")
     beat(f"This came from {msg['from_addr'].split('@')[1]}.")
@@ -259,10 +324,9 @@ def main():
     beat()
     beat("Nothing here calls Razorpay. These are the calls a human confirms.")
     beat()
-    beat("  The queue and the full evidence table:")
-    beat("    $env:RAZORPAY_WEBHOOK_SECRET=\"whsec_demo\"")
-    beat("    uvicorn webhook_app:app --app-dir src --port 8000")
-    beat("    http://localhost:8000/")
+    beat("The queue an operator actually works, rendered from this decision:")
+    beat()
+    block(dashboard_preview(store), indent=8)
 
     # ── 7 ────────────────────────────────────────────────────────────
     scene(7, "The other outcome: when there IS hard evidence.")
@@ -289,6 +353,14 @@ def main():
     beat("Even here the engine only RECOMMENDS. v1 would have cancelled this")
     beat("payout by itself, and was wrong about 2.2% of the ones it cancelled.")
     beat("There is no rejection outcome left in the engine; a test asserts it.")
+
+    print()
+    rule("─")
+    print("  Open it in a browser:")
+    print("    $env:RAZORPAY_WEBHOOK_SECRET=\"whsec_demo\"; "
+          "$env:PAYEEPROOF_SEED_DEMO=\"1\"")
+    print("    uvicorn webhook_app:app --app-dir src --port 8000")
+    print("    http://localhost:8000/")
 
     print()
     rule("═")
