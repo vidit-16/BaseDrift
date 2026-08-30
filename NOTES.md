@@ -862,6 +862,48 @@ V2.C  TRIAGE STAGE 4, MEASURED — AND IT DOES NOT PAY FOR ITSELF
       alternatives are worth trying against it. It should not be described as
       part of the working funnel until one of them beats the free check.
 
+V2.P  THE RAZORPAYX INTEGRATION POINT IS UNTESTABLE IN A SANDBOX — CONFIRMED
+
+      The open question from the v2 plan: does test mode emit payout.pending at
+      all? Answered, and the answer closes the option rather than opening it.
+
+      Asked of RazorpayX's own assistant, the reply was that payout.pending is
+      supported, fires whenever a payout moves to pending, and applies to all
+      payouts. True, and it answers a different question than the one that
+      matters. The docs answer this one:
+
+        "The Approval Workflow is not available in the test mode. This means
+         the `pending` and `rejected` states are not available in the test
+         mode."
+        — https://razorpay.com/docs/x/dashboard/test-mode/
+
+      Test-mode payouts start in `processing`, or `queued` on a short balance.
+      So a payout can never REACH pending there, and an event that fires on
+      entering a state that cannot be entered never fires.
+
+      AND THE OUTBOUND HALF IS BLOCKED TOO, which had not been considered.
+      POST /payouts/{id}/approve and /reject operate on pending payouts. With
+      no pending state there is nothing for them to act on. The partial
+      integration sketched in the v2 plan — replay the event inbound, execute
+      approve/reject outbound against test mode — therefore does not work, and
+      is withdrawn rather than left standing as a plan.
+
+      WHAT IT ACTUALLY TAKES: live mode, Approval Workflow enabled, a real
+      RazorpayX current account, and Payout Approval API access via a
+      Technology Partner or OAuth arrangement. Commercial and onboarding
+      prerequisites, not engineering ones.
+
+      THE USEFUL CONSEQUENCE. "Nothing here calls Razorpay" reads like a gap
+      someone declined to close. The accurate statement is that the control
+      point cannot be reached without a live account and real money moving.
+      That is a documented platform constraint with a quote behind it, and it
+      is a much better sentence.
+
+      The honest next rung is unchanged and is not a code change: shadow mode
+      against a willing merchant, deciding nothing and logging what it would
+      have done. That is also the only thing that produces a real
+      false-positive rate, which is the number that decides deployability.
+
 V2.S  THE SCHEMA, DECIDED IN FULL BEFORE THE GENERATOR RUNS (Phase 2)
 
       Written down because the generator pass can only be paid for once: it

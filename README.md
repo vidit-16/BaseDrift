@@ -1047,8 +1047,45 @@ The vendor master's own update path needs equivalent protection in production. T
 ## Platform constraints, handled transparently
 
 - FAV is [unavailable in test mode](https://razorpay.com/docs/api/x/account-validation/) and is RazorpayX Lite only — a real integration constraint, not merely a sandbox one
-- Approval Workflow is [unavailable in test mode](https://razorpay.com/docs/razorpayx/approval-workflow)
 - Reverse Penny Drop is enabled on request, not by default
+
+### The integration point cannot be exercised in a sandbox
+
+This is the sharpest constraint here and it is worth stating exactly, because
+"nothing calls Razorpay" otherwise reads like a gap someone chose not to close.
+
+[RazorpayX Test Mode](https://razorpay.com/docs/x/dashboard/test-mode/) says:
+
+> The Approval Workflow is not available in the test mode. This means the
+> `pending` and `rejected` states are not available in the test mode.
+
+Payouts created in test mode start in `processing`, or `queued` if the balance
+is short. So:
+
+| | in test mode |
+|---|---|
+| a payout reaching `pending` | **impossible** — the state does not exist there |
+| receiving `payout.pending` | never fires; there is nothing to fire on |
+| `POST /payouts/{id}/approve` and `/reject` | nothing to act on — they operate on pending payouts |
+
+**Both halves of the loop are blocked, not just the inbound one.** The event
+itself is real and applies to all payouts; what is unavailable is any way to
+reach the state that triggers it without a live account and real money.
+
+A partial integration — replay the event inbound, execute approve/reject
+outbound against test mode — does not work either, for the same reason. It was
+considered and is ruled out.
+
+What that leaves: this system's control point requires **live mode with Approval
+Workflow enabled**, on a real RazorpayX current account, with Payout Approval
+API access, which is a Technology Partner or OAuth arrangement rather than a
+default. Those are commercial and onboarding prerequisites, not engineering
+ones.
+
+So the simulation here is not a shortcut taken in place of an integration that
+was available. It is the only thing that *can* be built before an account
+exists, and the honest next rung is shadow mode against a willing merchant —
+deciding nothing, logging what it would have done.
 
 FAV results are replayed schema-faithfully from Razorpay's documented response shape — never presented as live calls. The decision layer is entirely PayeeProof's own logic.
 
@@ -1063,6 +1100,7 @@ FAV results are replayed schema-faithfully from Razorpay's documented response s
 - [Create Fund Account](https://razorpay.com/docs/api/x/account-validation/bank-account/create-fund-account/)
 - [Fund Accounts — multiple per contact](https://razorpay.com/docs/x/fund-accounts/)
 - [Reverse Penny Drop](https://razorpay.com/docs/x/fund-accounts/reverse-penny-drop/)
-- [Approval Workflow](https://razorpay.com/docs/razorpayx/approval-workflow)
+- [Approval Workflow](https://razorpay.com/docs/x/manage-teams/approval-workflow/)
+- [RazorpayX Test Mode](https://razorpay.com/docs/x/dashboard/test-mode/) — why the integration point cannot be exercised in a sandbox
 - [Payouts best practices](https://razorpay.com/docs/x/payouts/best-practices/)
 - [FBI IC3 — Business Email Compromise](https://www.ic3.gov/PSA/2014/PSA140627.pdf)
