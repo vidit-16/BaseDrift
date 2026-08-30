@@ -2,6 +2,7 @@
 PayeeProof — the two-minute demo.
 
     python src/demo.py
+    python src/demo.py --serve      # then open http://localhost:8000/
 
 One real fraud case from the evaluation corpus, carried end to end through the
 real code: triage, the MCP inbox, the extractor, the rule engine, the two
@@ -198,6 +199,32 @@ def fire(store, fund_account_id, payout_id, amount, doc_id=None, fav=None):
                                    event_id_header=f"evt_{payout_id}")
 
 
+def serve(store):
+    """
+    Hand THIS store to the dashboard.
+
+    The alternative was telling the viewer to start uvicorn separately, which
+    boots webhook_demo's fixtures — a different vendor, different payouts, and
+    a queue that has nothing to do with the story just told. One command, one
+    set of decisions.
+    """
+    import uvicorn
+    import webhook
+
+    os.environ.setdefault("RAZORPAY_WEBHOOK_SECRET", SECRET)
+    print()
+    rule("─")
+    print("  The operator dashboard, holding the decisions above:")
+    print("    http://localhost:8000/            the queue")
+    print("    http://localhost:8000/case/pout_bec    the evidence table")
+    print()
+    print("  Ctrl-C to stop.")
+    rule("─")
+    print()
+    uvicorn.run(webhook.create_app(store), host="127.0.0.1", port=8000,
+                log_level="warning")
+
+
 def main():
     case, msg = load_case()
     cached_note = use_cached_extraction_if_no_key(CASE_ID)
@@ -354,13 +381,11 @@ def main():
     beat("payout by itself, and was wrong about 2.2% of the ones it cancelled.")
     beat("There is no rejection outcome left in the engine; a test asserts it.")
 
-    print()
-    rule("─")
-    print("  Open it in a browser:")
-    print("    $env:RAZORPAY_WEBHOOK_SECRET=\"whsec_demo\"; "
-          "$env:PAYEEPROOF_SEED_DEMO=\"1\"")
-    print("    uvicorn webhook_app:app --app-dir src --port 8000")
-    print("    http://localhost:8000/")
+    if "--serve" not in sys.argv:
+        print()
+        rule("─")
+        print("  To open the dashboard on these same decisions:")
+        print("    python src/demo.py --serve")
 
     print()
     rule("═")
@@ -368,6 +393,9 @@ def main():
     print("  On 248 held-out cases: 100% of fraud held, 0% of legitimate")
     print("  payments cancelled. v1 cancelled 2.2% of them outright.")
     rule("═")
+
+    if "--serve" in sys.argv:
+        serve(store)
     print()
     return 0
 

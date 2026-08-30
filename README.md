@@ -211,6 +211,8 @@ python eval/rules_eval.py     # rule scoring vs baselines
 python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
 python eval/base_rates.py     # daily call volume vs the null baseline
 python src/demo.py            # THE DEMO — one payout, end to end, ~2 min
+python src/demo.py --serve    # the same, then serves the dashboard on those
+                              #   decisions at http://localhost:8000/
 python src/webhook_demo.py    # five signed scenarios over real HTTP
 ```
 
