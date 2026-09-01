@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from extractor import ExtractionResult  # noqa: E402
 
+import casefile  # noqa: E402
 import webhook  # noqa: E402
 from decision_engine import ALLOW, BLOCK, STEP_UP, VendorRecord  # noqa: E402
 from webhook import (  # noqa: E402
@@ -665,9 +666,74 @@ def test_the_inbox_view_shows_what_triage_dropped():
 
     import dashboard
     html = dashboard.render_inbox(list(store.triage_log))
-    assert "Routed" in html and "Not routed" in html
+    assert "Needs review" in html and "Filtered out" in html
     assert "quickfundsindia.co" in html, "a dropped message is not shown"
     assert "balajilogistic.com" in html
+
+    # And every message is openable, the dropped one included. A queue that
+    # only opens its own hits cannot be audited by anyone who does not already
+    # trust it, which is exactly the reviewer this section exists for.
+    from urllib.parse import quote
+    for mid in ("<drop@x>", "<keep@x>"):
+        href = "/message/" + quote(mid, safe="")
+        assert href in html, f"{mid} cannot be opened"
+
+
+def test_any_message_can_be_opened_and_shows_what_the_sender_wrote():
+    """
+    The operator has to be able to read the email, not just the verdict.
+
+    A screen that shows a rule name and a recommendation asks a human to
+    rubber-stamp a machine. The whole design puts the decision back on a person,
+    and a person cannot exercise that unless the evidence they are judging — the
+    supplier's own words — is on the page. Dropped messages open too, because
+    "triage binned a real request" is only auditable by reading what it binned.
+    """
+    import triage as T
+    from urllib.parse import quote
+    store = make_store(dest_account=NEW_ACCT)
+    store.ingest_message(T.Message(
+        message_id="<open@x>", from_addr="accounts@balajilogistic.com",
+        subject="Updated bank details for INV-88",
+        body=f"Please send all future payments to {NEW_ACCT} (KKBK0403467).",
+        received_at=10.0))
+    store.ingest_message(T.Message(
+        message_id="<binned@x>", from_addr="offers@quickfundsindia.co",
+        subject="offer", body="Unlock working capital in 24 hours.",
+        received_at=20.0))
+    client = _client(store)
+
+    r = client.get("/message/" + quote("<open@x>", safe=""))
+    assert r.status_code == 200
+    assert NEW_ACCT in r.text, "the message body is not on the page"
+    assert "Updated bank details" in r.text
+
+    r = client.get("/message/" + quote("<binned@x>", safe=""))
+    assert r.status_code == 200
+    assert "working capital" in r.text, "a filtered message cannot be read"
+
+    assert client.get("/message/" + quote("<nosuch@x>", safe="")).status_code == 200
+
+
+def test_the_queue_speaks_english_not_identifiers():
+    """
+    `R5_tier1_inconclusive` is a variable name. An accounts-payable clerk has to
+    act on it, and cannot act on a symbol they have to be taught. The identifier
+    stays on the page for the auditor — the rule table is the authoritative
+    policy and a paraphrase is not — but it is not the headline.
+    """
+    import dashboard
+    a = {"payout_id": "pout_x", "final_outcome": "STEP_UP_VERIFY",
+         "decision": {"rule_fired": "R5_tier1_inconclusive",
+                      "reason": "identity unconfirmed"}}
+    html = dashboard.render_message({
+        "message_id": "<v@x>", "from": "a@b.com", "subject": "s",
+        "body": "b", "verdict": "ROUTE", "match": "exact",
+        "final_outcome": "STEP_UP_VERIFY", "audit": a,
+        "rule_fired": "R5_tier1_inconclusive"})
+    assert "Identity checks could not be completed" in html
+    assert "On hold" in html
+    assert "R5_tier1_inconclusive" in html, "the auditor lost the rule name"
 
 
 def test_the_inbox_view_flags_how_the_vendor_was_matched():
@@ -702,6 +768,104 @@ def test_case_view_shows_the_signal_table():
     assert "account_continuity" in body
     assert NEW_ACCT in body
     assert "razorpay_fund_account" in body
+
+
+def test_the_operator_can_record_a_callback_and_the_case_moves():
+    """
+    The buttons record facts established outside this system. Nothing about a
+    phone call can be observed by the engine, so the only honest thing the
+    screen can do is take the operator's word for it and record who gave it.
+    """
+    store = make_store(dest_account=NEW_ACCT)
+    client = _client(store)
+    _fire(client, store, NEW_ACCT, "pout_call")
+
+    r = client.post("/case/pout_call/action",
+                    data={"action": "callback_confirmed",
+                          "actor": "Priya Menon",
+                          "note": "Spoke to Balaji on the number we hold."})
+    assert r.status_code == 200
+    assert "Refused" not in r.text, r.text[:400]
+    assert casefile.state_of(store.case("pout_call")) == "verified"
+    assert "Priya Menon" in r.text
+    assert "Spoke to Balaji" in r.text, "the note is not on the case file"
+
+
+def test_the_verifier_cannot_release_over_http_either():
+    """
+    The two-person rule is enforced on the server, so it cannot be skipped by
+    posting the form directly. A control that only exists as a disabled button
+    is not a control.
+    """
+    store = make_store(dest_account=NEW_ACCT)
+    client = _client(store)
+    _fire(client, store, NEW_ACCT, "pout_sod")
+
+    client.post("/case/pout_sod/action",
+                data={"action": "callback_confirmed", "actor": "Priya Menon"})
+    r = client.post("/case/pout_sod/action",
+                    data={"action": "released", "actor": "Priya Menon"})
+    assert "Refused" in r.text, "the verifier released their own case"
+    assert casefile.state_of(store.case("pout_sod")) == "verified"
+
+    r = client.post("/case/pout_sod/action",
+                    data={"action": "released", "actor": "Rahul Iyer"})
+    assert "Refused" not in r.text
+    assert casefile.state_of(store.case("pout_sod")) == "released"
+
+
+def test_nothing_releases_over_http_without_a_verification():
+    store = make_store(dest_account=NEW_ACCT)
+    client = _client(store)
+    _fire(client, store, NEW_ACCT, "pout_bare")
+    r = client.post("/case/pout_bare/action",
+                    data={"action": "released", "actor": "Rahul Iyer"})
+    assert "Refused" in r.text
+    assert casefile.state_of(store.case("pout_bare")) == "open"
+
+
+def test_an_invented_action_is_refused_not_recorded():
+    """
+    The form is attacker-reachable in exactly the way every other endpoint is.
+    A free-text action would let anyone write anything into the audit trail.
+    """
+    store = make_store(dest_account=NEW_ACCT)
+    client = _client(store)
+    _fire(client, store, NEW_ACCT, "pout_bogus")
+    r = client.post("/case/pout_bogus/action",
+                    data={"action": "release_everything", "actor": "Priya Menon"})
+    assert "Refused" in r.text
+    assert store.case("pout_bogus") == []
+
+
+def test_a_closed_case_accepts_nothing_further():
+    store = make_store(dest_account=NEW_ACCT)
+    client = _client(store)
+    _fire(client, store, NEW_ACCT, "pout_closed")
+    client.post("/case/pout_closed/action",
+                data={"action": "rejected", "actor": "Meera Nair"})
+    before = len(store.case("pout_closed"))
+    r = client.post("/case/pout_closed/action",
+                    data={"action": "callback_confirmed", "actor": "Priya Menon"})
+    assert "Refused" in r.text
+    assert len(store.case("pout_closed")) == before
+
+
+def test_the_case_page_offers_the_penny_drop_against_the_named_account():
+    """
+    The account to demand was already computed and shown. The button has to
+    carry that same account, or an operator can record "rupee received" without
+    the record saying from where — which is the whole control.
+    """
+    store = make_store(dest_account=NEW_ACCT)
+    client = _client(store)
+    _fire(client, store, NEW_ACCT, "pout_pd")
+    body = client.get("/case/pout_pd").text
+    a = store.find_audit("pout_pd")
+    named = (a.get("verification_demand") or {}).get("account_number")
+    if named:
+        assert 'name="detail"' in body
+        assert named in body
 
 
 def test_unknown_case_does_not_error():

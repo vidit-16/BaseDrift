@@ -60,6 +60,7 @@ from extractor import (
     ACTION_NONE, INTENT_FOLLOWUP, SCOPE_NONE, ExtractionResult,
 )
 import extractor as extractor_mod
+import casefile
 import verifier
 
 log = logging.getLogger("payeeproof.webhook")
@@ -201,12 +202,53 @@ class Store:
         # durable append-only storage, since an audit trail that a restart
         # erases is not an audit trail.
         self.audits: Deque[Dict[str, Any]] = deque(maxlen=audit_limit)
+        # What a human did about each held payout, keyed by payout id.
+        # An append-only log rather than a status field: the state is
+        # recomputed from it, so a case can never claim a status its
+        # own history does not support. See src/casefile.py.
+        self.case_actions: Dict[str, List[Dict[str, Any]]] = {}
+
+    def case(self, payout_id: str) -> List[Dict[str, Any]]:
+        """The case file for a payout, created empty on first look."""
+        return self.case_actions.setdefault(payout_id, [])
+
+    def record_case_action(self, payout_id: str, action: str, actor: str,
+                           note: str = "", detail: str = "") -> Dict[str, Any]:
+        """
+        Record one human act against a payout, subject to the case rules.
+
+        The guards live in casefile and are checked HERE, on the server, not in
+        the template that draws the button. A greyed-out control stops an honest
+        mistake; only this stops someone who crafts the request by hand, and the
+        two-person rule is worth nothing if it can be skipped with curl.
+        """
+        actions = self.case(payout_id)
+        a = self.find_audit(payout_id)
+        final = (a or {}).get("final_outcome")
+        if action == "released":
+            ok, why = casefile.may_release(actions, actor, final)
+            if not ok:
+                raise PermissionError(why)
+        elif action == "rejected":
+            ok, why = casefile.may_reject(actions, final)
+            if not ok:
+                raise PermissionError(why)
+        elif casefile.state_of(actions, final) in ("released", "rejected"):
+            raise PermissionError(
+                "This case is closed. Nothing further can be recorded on it.")
+        return casefile.record(actions, action, actor, note=note, detail=detail)
 
     def record_audit(self, audit: Dict[str, Any]) -> None:
         self.audits.appendleft(audit)
 
     def recent_audits(self, limit: int = 50):
         return list(self.audits)[:limit]
+
+    def find_message(self, message_id: str) -> Optional[Dict[str, Any]]:
+        for t in self.triage_log:
+            if t.get("message_id") == message_id:
+                return t
+        return None
 
     def audit_for_document(self, document_id: str) -> Optional[Dict[str, Any]]:
         """The payout a routed message ended up deciding, if one has arrived."""
@@ -293,6 +335,12 @@ class Store:
                 "message_id": message.message_id,
                 "from": message.from_addr,
                 "subject": message.subject,
+                # The message itself. An operator asked to judge a payment
+                # cannot do it from a verdict and a rule name — they have to be
+                # able to read what the supplier actually wrote.
+                "body": message.body,
+                "thread_id": message.thread_id,
+                "in_reply_to": message.in_reply_to,
                 "received_at": message.received_at,
                 "verdict": result.verdict,
                 "stage": result.stage,
@@ -302,6 +350,14 @@ class Store:
                 "matched_domain": result.matched_domain,
                 "document_id": document_id,
                 "inbox_signals": [s.name for s in signals],
+                # And what each one actually found. The name alone made
+                # every row read the same; the finding is what tells an
+                # operator whether a sender has moved the destination
+                # twice or eleven times.
+                "inbox_findings": [
+                    {"name": s.name, "result": s.result,
+                     "detail": s.detail, "source": s.source}
+                    for s in signals],
             })
 
         if not result.routed:
@@ -665,26 +721,79 @@ def create_app(store: Optional[Store] = None, fav_lookup=None):
     async def decisions():
         return dashboard.render_index(app.state.store.recent_audits())
 
+    def _decorate(t):
+        """A triage row plus the payout decision it produced, if one arrived."""
+        store = app.state.store
+        row = dict(t)
+        if t.get("document_id"):
+            a = store.audit_for_document(t["document_id"])
+            if a:
+                d = a.get("decision") or {}
+                row["payout_id"] = a.get("payout_id")
+                row["final_outcome"] = a.get("final_outcome")
+                row["rule_fired"] = d.get("rule_fired")
+                row["recommended_action"] = d.get("recommended_action")
+                row["audit"] = a
+                # Where the HUMAN work stands, which is what an operator is
+                # actually queueing on. "Held" and "held, called, waiting on a
+                # second person" are different jobs and looked identical.
+                row["case"] = casefile.summary(
+                    store.case(a.get("payout_id")), a.get("final_outcome"))
+        return row
+
     @app.get("/inbox", response_class=HTMLResponse)
     async def inbox():
+        return HTMLResponse(dashboard.render_inbox(
+            [_decorate(t) for t in app.state.store.triage_log]))
+
+    @app.get("/message/{message_id:path}", response_class=HTMLResponse)
+    async def message(message_id: str):
+        t = app.state.store.find_message(message_id)
+        return HTMLResponse(dashboard.render_message(
+            _decorate(t) if t else None))
+
+    def _actor(request) -> str:
+        """
+        Who the dashboard is acting as.
+
+        A cookie, and deliberately not authentication. This demo has none —
+        COMPLIANCE.md lists it as production work — so the identity is chosen,
+        not proven. What it does buy is that the two-person rule is exercised
+        for real: the same browser cannot record a verification and then release
+        the payment without switching, and switching is a visible act.
+        """
+        name = request.cookies.get("pp_actor") or casefile.OPERATORS[0][0]
+        return name
+
+    def _case_page(payout_id: str, actor: str, error: str = ""):
         store = app.state.store
-        rows = []
-        for t in store.triage_log:
-            row = dict(t)
-            if t.get("document_id"):
-                a = store.audit_for_document(t["document_id"])
-                if a:
-                    row["payout_id"] = a.get("payout_id")
-                    row["final_outcome"] = a.get("final_outcome")
-                    row["rule_fired"] = (a.get("decision") or {}).get("rule_fired")
-                    row["recommended_action"] = (
-                        a.get("decision") or {}).get("recommended_action")
-            rows.append(row)
-        return HTMLResponse(dashboard.render_inbox(rows))
+        return dashboard.render_case(
+            store.find_audit(payout_id),
+            case=store.case(payout_id) if payout_id else None,
+            actor=actor, error=error)
 
     @app.get("/case/{payout_id}", response_class=HTMLResponse)
-    async def case_detail(payout_id: str):
-        return dashboard.render_case(app.state.store.find_audit(payout_id))
+    async def case_detail(payout_id: str, request: Request):
+        return HTMLResponse(_case_page(payout_id, _actor(request)))
+
+    @app.post("/case/{payout_id}/action", response_class=HTMLResponse)
+    async def case_action(payout_id: str, request: Request):
+        form = await request.form()
+        actor = (form.get("actor") or _actor(request)).strip()
+        action = (form.get("action") or "").strip()
+        note = (form.get("note") or "").strip()
+        detail = (form.get("detail") or "").strip()
+        error = ""
+        try:
+            app.state.store.record_case_action(
+                payout_id, action, actor, note=note, detail=detail)
+        except (PermissionError, ValueError) as e:
+            error = str(e)
+        r = HTMLResponse(_case_page(payout_id, actor, error))
+        # Remember who is acting, so the next screen does not silently revert
+        # to somebody else and make the two-person rule look like a glitch.
+        r.set_cookie("pp_actor", actor, httponly=True, samesite="lax")
+        return r
 
     @app.get("/healthz")
     async def healthz():
