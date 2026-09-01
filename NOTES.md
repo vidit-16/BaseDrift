@@ -45,6 +45,16 @@ Groq free tier. No credit card. console.groq.com
     src/dashboard.py        operator view. Shows what the webhook response
                             withholds, ON PURPOSE — different audience. Needs
                             auth in front of it in any real deployment.
+                            Every message opens, filtered ones included — see
+                            V2.D(a) for why that is a control, not a nicety.
+    src/vocabulary.py       every internal code -> what an AP clerk would say.
+                            The identifier is kept beside the sentence, never
+                            replaced by it: operators cannot act on a symbol,
+                            auditors cannot accept a paraphrase of the policy.
+    src/casefile.py         what a human did about a held payout. State is a
+                            FOLD over an append-only log, never a stored field.
+                            may_release() enforces the two-person rule ON THE
+                            SERVER — a greyed-out button is not a control.
     src/webhook_demo.py     five signed scenarios over real HTTP.
     src/pipeline.py         run_case() — end to end, returns audit dict.
                             `python src/pipeline.py` runs the hero demo.
@@ -97,14 +107,24 @@ Groq free tier. No credit card. console.groq.com
 - "Couldn't evaluate" is not "caught". An R1 hold is correct policy but is
   never scored as a detection — run_case() sets correct=None, scored=False.
 - The holdout is scored once, at the end, and reported with its size.
+- Whoever records a verification outcome may NOT release the payment. Enforced
+  in casefile.may_release(), called server-side on POST. Do not "simplify" this
+  into a disabled button, and do not add a single Approve control that skips
+  it: one person who can both verify and release approves their own request,
+  and every control upstream becomes theatre. Rejection is deliberately NOT
+  segregated — refusing to pay releases nothing.
+- Do not claim the inbox/MCP layer improves detection. Measured: Tier 2 decides
+  nothing on this corpus (R6 fires 0/552), no evaluator exercises it, and its
+  dominant signal fires on 70.0% of legitimate traffic against 36.8% of fraud.
+  See V2.E. What it demonstrably provides is triage and evidence on screen.
 
 ## Status
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
 data generator + generated dev/holdout splits.
 
-150 tests across 6 suites, none needing an API key: `python tests/run_all.py`
-(decision_engine 32, eval_harness 9, extractor 30, render 17,
-verifier+pipeline 25, webhook 37).
+264 tests across 8 suites, none needing an API key: `python tests/run_all.py`
+(decision_engine 39, eval_harness 9, extractor 42, render 17,
+verifier+pipeline 44, webhook 56, triage_inbox 35, casefile 22).
 
 An early version of this file claimed 38 unit tests when zero existed. The
 claim was removed at the time rather than quietly left in place; the suites
@@ -1083,6 +1103,153 @@ V2.S  THE SCHEMA, DECIDED IN FULL BEFORE THE GENERATOR RUNS (Phase 2)
         a vendor-master audit log           the recursive problem README names;
                                             it is a v3 control, not a column
         message threading beyond a thread id V2.3 decides its own shape
+
+V2.E  TIER 2 IS DECISION-INERT ON THIS CORPUS, AND THE INBOX SIGNAL IS
+      ANTI-CORRELATED WITH FRAUD
+
+      Found while asking why one risk chip appeared on 64 of 72 rows in the
+      operator queue. The display problem was real; what it was displaying was
+      a bigger one. Recorded here rather than fixed quietly, because "MCP is
+      wired into the live decision path" is a claim this project has been
+      making and it is true only as plumbing.
+
+      (a) NO TIER 2 SIGNAL DECIDES ANYTHING. Rule distribution, dev split,
+          552 cases, from eval/rules_eval.py:
+
+            R5_tier1_inconclusive                 306
+            R2a_no_change_confirmed               114
+            R3_identity_conflict                   69
+            R4_bec_pattern                         62
+            R2b_followup_unverified_destination     1
+            R6_contextual_risk                      0   <- never fires
+            R7_all_clear                            0   <- never fires
+
+          Tier 2 is consulted at R6 and nowhere else. R6 is reached only when
+          tier 1 is entirely clean AND a change is being requested, and no case
+          in the corpus is in that state: R2a takes the clean-and-no-change
+          cases before tier 2 is read, R5 takes everything with any tier-1
+          gap, R3/R4 take the rest.
+
+          So sender_domain, urgency, channel_manipulation, payment_pattern and
+          every inbox signal are computed, stored, rendered and asserted upon
+          while changing no outcome. Re-ran all 552 decisions with and without
+          inbox_signals: ZERO rule flips, identical outcome distribution.
+
+      (b) AND NO EVALUATOR EXERCISES THEM. eval/ contains no reference to
+          inbox_signals. Every number this project reports for the decision
+          engine is measured with the inbox layer absent. That is not a wrong
+          number — it is a number that does not cover a layer which IS in the
+          live path in src/webhook.py.
+
+      (c) THE DOMINANT SIGNAL POINTS THE WRONG WAY.
+          inbox_repeat_destination_requests, measured on the dev split, on the
+          552 change-request messages:
+
+            label   n     fires (>=2 priors)   median priors
+            legit   283   198  (70.0%)          6
+            fraud   269    99  (36.8%)          0
+
+          It fires nearly twice as often on legitimate traffic. The cause is a
+          category error, not a threshold: prior_change_requests() counts
+          earlier messages matching triage.looks_like_it_touches_money(), whose
+          own docstring says it is "deliberately generous" because it was built
+          to decide whether a CLASSIFIER CALL is worth making. Used as "prior
+          change requests" it counts routine invoices, so an established
+          supplier accumulates 12-25 "priors" and a typosquat has none — the
+          signal is largely measuring how long a relationship has existed.
+
+      WHY NOTHING UNSAFE FOLLOWS. Inbox evidence is Tier 2 and structurally
+      barred from releasing anything; inbox_signals.assert_cannot_release()
+      still holds, and a signal that fires on legitimate traffic can at worst
+      hold a payment. Nothing was released that should not have been. The cost
+      is a hold that buys nothing, and a claim larger than the evidence.
+
+      WHAT WAS CHANGED NOW: only the label, to match what is actually counted
+      ("Earlier emails from this sender also named an account", not "This
+      sender has moved the destination before"). The dashboard must not state a
+      claim the data does not support.
+
+      WHAT WAS DELIBERATELY NOT CHANGED: the signal's semantics. Tightening the
+      predicate to real change requests alters decision behaviour and needs its
+      own measurement against both splits, and R6 would still never fire. The
+      two options, either of which is a piece of work in itself:
+
+        1  Tighten prior_change_requests() to count only messages that ASK to
+           change a destination. Makes the signal mean its name. Does not make
+           R6 reachable.
+        2  Generate the missing scenario — identity fully clean, a change
+           requested, circumstances the only adverse evidence. This is the one
+           that makes Tier 2 testable at all, and it needs a generator pass.
+
+      DO NOT claim the inbox layer improves detection until one of these is
+      done and measured. What it demonstrably provides today is triage — 221
+      messages down to 72 that need review — and evidence on the operator's
+      screen. Both are real. Neither is a decision.
+
+
+V2.D  THE OPERATOR DASHBOARD — CASE FILE, TWO-PERSON RULE, PLAIN LANGUAGE
+
+      Built so the layer can be shown to somebody who does not know the rule
+      table. Three things it now does that it did not.
+
+      (a) EVERY MESSAGE OPENS, INCLUDING THE FILTERED ONES. /message/{id}
+          renders the mail itself first and the machine's reading second. The
+          order is deliberate: an operator who reads a verdict before the email
+          inherits the machine's conclusion. The dropped messages open too,
+          because "triage binned a real change request" is the failure this
+          layer is most exposed to and it is only auditable by reading what it
+          binned. Message ids are angle-bracketed, so hrefs are
+          percent-encoded — HTML-escaping alone rendered fine and produced a
+          link that did not resolve. A test holds this down.
+
+      (b) src/vocabulary.py — ONE PLACE THAT TRANSLATES EVERY CODE.
+          R5_tier1_inconclusive -> "Identity checks could not be completed",
+          plus a next-step sentence. The identifier is KEPT beside it in small
+          type, and the engine's own reason string is humanised for display
+          with the raw text preserved in a title attribute. Both audiences are
+          real: an operator cannot act on a symbol, and an auditor cannot
+          accept a paraphrase of the policy.
+
+      (c) src/casefile.py — WHAT A HUMAN DID, AND WHO MAY DO IT.
+          The buttons do not move money and are not approve/decline. Each
+          records a fact established OUTSIDE this system — a call placed on a
+          number the supplier did not choose, a rupee that arrived from the
+          named account. The engine cannot make a phone call; what it can do is
+          refuse to let the record of that call be written and acted on by the
+          same person.
+
+          State is a FOLD over an append-only log, never a stored field, so a
+          case cannot claim a status its own history does not support.
+
+          Three refusals, all in may_release() and all checked server-side on
+          POST rather than by drawing a button greyed out. A control that
+          exists only in the UI is not a control:
+
+            - nothing releases without a recorded verification. "Could not
+              reach them" is absence of evidence, and absence holds.
+            - whoever recorded the verification may not release. Compared
+              case-folded and whitespace-stripped, so a shift key does not
+              defeat it, and it collects EVERY past verifier rather than the
+              most recent one.
+            - a negative outcome is sticky. Confirm-then-deny stays contested;
+              last-write-wins would quietly turn that sequence into a release.
+
+          REJECTION IS DELIBERATELY NOT SEGREGATED. The two-person rule
+          protects money leaving. Refusing to pay releases nothing, so
+          requiring a second person there would slow the safe direction and buy
+          nothing. The control is applied where the loss is.
+
+          The operator identity is a cookie and NOT authentication — the demo
+          has none, and COMPLIANCE.md lists it as production work. What it buys
+          is that the rule is exercised rather than described: the same browser
+          cannot verify and then release without switching, and switching is a
+          visible act.
+
+      NOT BUILT, AND NOT PRETENDED: the case file is in memory, unauthenticated
+      and not append-only in storage. Production needs it durable and behind
+      auth, alongside everything else in COMPLIANCE.md. The RULES would not
+      change; only where they are written down.
+
 
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES
 
