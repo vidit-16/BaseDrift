@@ -114,9 +114,16 @@ Groq free tier. No credit card. console.groq.com
   and every control upstream becomes theatre. Rejection is deliberately NOT
   segregated — refusing to pay releases nothing.
 - Do not claim the inbox/MCP layer improves detection. Measured: Tier 2 decides
-  nothing on this corpus (R6 fires 0/552), no evaluator exercises it, and its
-  dominant signal fires on 70.0% of legitimate traffic against 36.8% of fraud.
-  See V2.E. What it demonstrably provides is triage and evidence on screen.
+  nothing on this corpus (R6 fires 0/552) and no evaluator exercises it. Its
+  dominant signal was retired after three variants failed to discriminate — see
+  V2.E and V2.F. What it demonstrably provides is triage and evidence on screen.
+- Routine mail in the synthetic inbox must quote the vendor's is_primary
+  account. It used to be a random number under template text that said
+  "unchanged", which made destination churn unmeasurable for every sender. See
+  V2.F(a).
+- When changing any generator, diff the output against the previous file before
+  trusting it. Draw ORDER is load-bearing: moving one rng call resamples the
+  whole corpus. Caught three times now, most recently in V2.F(b).
 
 ## Status
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
@@ -1185,6 +1192,99 @@ V2.E  TIER 2 IS DECISION-INERT ON THIS CORPUS, AND THE INBOX SIGNAL IS
       done and measured. What it demonstrably provides today is triage — 221
       messages down to 72 that need review — and evidence on the operator's
       screen. Both are real. Neither is a decision.
+
+      SUPERSEDED — option 1 was attempted and the signal is now RETIRED. The
+      corpus fix underneath it was worth doing on its own and was kept. See
+      V2.F, which follows.
+
+
+V2.F  THE MAILBOX DID NOT MODEL A SUPPLIER USING THE SAME ACCOUNT TWICE
+
+      Following V2.E option 1: tighten the signal to mean what its name says.
+      Doing it properly meant fixing the data first, and the data turned out to
+      be the whole story.
+
+      (a) THE CORPUS DEFECT. data/generate_inbox.py filled every routine
+          invoice, statement and chaser with a FRESHLY RANDOM account number,
+          while the template text said "Remittance details are unchanged",
+          "as held on your file" and "Settlement to {acct} as usual". The words
+          and the data contradicted each other.
+
+          Measured before the fix, across the 120 sender domains that are in
+          the vendor master: 1789 distinct account numbers named in routine
+          mail, of which 88 — 4.9% — were actually on file. A single legitimate
+          supplier's history named 20 to 24 distinct accounts, each once.
+
+          So the mailbox modelled every supplier as changing bank account on
+          every message. No destination-churn signal can exist on data like
+          that, and the signal that did exist degenerated into "how long has
+          this relationship existed", which is anti-correlated with fraud
+          because a typosquat has no history at all.
+
+      (b) THE FIX, AND WHAT IT COST. Routine mail now quotes the vendor's
+          is_primary account and ifsc. After: routine history holds a median of
+          1 distinct account and a MAXIMUM of 1.
+
+          The rng draws are still made and discarded when a vendor has no
+          primary on file, and rng.choice(pool) still happens BEFORE them, so
+          the stream is untouched. Verified: 1478 noise bodies changed, ZERO
+          change-request bodies changed, and every message id, timestamp,
+          sender and ordering byte-identical. Two consequences that matter —
+          the extraction cache is NOT voided (change-request bodies are the
+          extraction inputs), and the triage funnel is unchanged to the
+          message: ROUTE 2374, NOT_A_CHANGE 2562, DROPPED 761, UNKNOWN_SENDER
+          1479, before and after, fraud routed 269/269.
+
+          This is the third time an rng-ordering mistake has been caught in
+          this project. The first version of this fix called _acct(rng) before
+          rng.choice(pool) and resampled the entire corpus; the positional diff
+          showed every field changing and it was caught immediately. Keep
+          diffing generated data against the previous file.
+
+      (c) AND THE SIGNAL STILL DID NOT WORK. Measured on dev after the fix:
+
+            variant                                          fraud    legit
+            >= 2 prior messages naming an account (old)      35.3%    69.3%
+            >= 2 distinct prior accounts                     24.9%    52.7%
+            >= 1 prior off-file account, given any history   63.3%    55.4%
+
+          Only the third points the right way, and eight points is not a
+          signal. The ceiling is the corpus, not the threshold: 552 change
+          requests over 90 days across 301 sender domains means 107 domains ask
+          to move the destination twice or more in one quarter. A real supplier
+          does it once in several years. Change requests are oversampled ~50x
+          for statistical power — deliberately, and it is the right call for
+          measuring the RULES — so any "has this sender asked before?" signal is
+          measuring the oversampling and nothing else.
+
+      (d) RETIRED RATHER THAN RE-TUNED. V2.C set the precedent: a component
+          that survives only by being unmeasured is the exact defect this
+          project keeps finding. repeat_change_requests() is removed from
+          inbox_signals.collect(); the reasoning is kept where the function was
+          so the next person does not rediscover it.
+
+          prior_change_requests() REMAINS an MCP tool. The investigation agent
+          may still ask the mailbox that question. What was removed is the
+          deterministic signal that turned the answer into a hold.
+
+          Nothing is lost operationally. The planted-account attack this was
+          meant to catch is caught where it was always actually caught —
+          select_verification_account()'s seasoning and added_via checks,
+          measured at 12/12 held. And Tier 2 decides nothing anyway (V2.E).
+
+          Effect on the operator queue: risk chips fell from 72 of 72 routed
+          rows to 8, and those 8 are first-contact, lookalike-domain and
+          shallow-thread — the ones that separate a message from the rest. A
+          chip on every row is wallpaper.
+
+      WHAT WOULD BRING IT BACK: a corpus with a realistic change-request base
+      rate. Nothing about the idea is wrong. The data cannot show it, and that
+      is a statement about the data.
+
+      STILL OPEN, UNCHANGED BY ANY OF THIS: R6 remains unreachable, so no Tier 2
+      signal decides anything. That needs the missing scenario — identity fully
+      clean, a change requested, circumstances the only adverse evidence — and
+      that is a generate_data.py pass, which DOES void the extraction cache.
 
 
 V2.D  THE OPERATOR DASHBOARD — CASE FILE, TWO-PERSON RULE, PLAIN LANGUAGE

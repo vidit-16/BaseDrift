@@ -340,7 +340,6 @@ def test_no_inbox_signal_can_ever_pass():
     every = [
         IS.first_contact([]),
         IS.thread_depth_signal(1, True),
-        IS.repeat_change_requests([{}, {}, {}]),
         IS.resolution_by_content("content"),
     ]
     assert all(s is not None for s in every)
@@ -358,7 +357,6 @@ def test_an_established_correspondence_produces_no_signal_rather_than_a_good_one
     """
     assert IS.first_contact([{"message_id": "x"}] * 50) is None
     assert IS.thread_depth_signal(40, True) is None
-    assert IS.repeat_change_requests([{}]) is None
 
 
 def test_decide_refuses_an_inbox_signal_that_claims_tier_one():
@@ -413,7 +411,7 @@ def test_inbox_signals_never_turn_a_hold_into_a_release():
                          sender_domain=VENDOR.known_domain, amount=28000.0)
     fav = FAVResult("active", "Balaji Logistics", 99)
     every = [IS.first_contact([]), IS.thread_depth_signal(1, True),
-             IS.repeat_change_requests([{}, {}]), IS.resolution_by_content("content")]
+             IS.resolution_by_content("content")]
     held = decide(e, fav, VENDOR, destination_account_number="999911112222")
     with_inbox = decide(e, fav, VENDOR, destination_account_number="999911112222",
                         inbox_signals=every)

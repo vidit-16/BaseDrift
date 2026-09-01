@@ -201,26 +201,16 @@ def _outcome_pill(outcome: str) -> str:
 
 # Rarest and most decisive first. A chip that appears on nine rows in ten is
 # wallpaper — the operator stops seeing chips at all — so the ones that separate
-# a few messages from the rest have to lead, and the common one has to carry a
-# number that makes it mean something on the row it is on.
+# a few messages from the rest have to lead.
 FLAG_ORDER = [
     "inbox_first_contact",
     "inbox_thread_shallow",
-    "inbox_repeat_destination_requests",
 ]
 
 # When two chips would say the same thing, keep the one that says WHY. Triage's
 # "content" match and the inbox_sender_unrecognised signal are the same fact
 # arrived at twice, and showing both taught the reader that chips are padding.
 SUPPRESSED_BY_SIGNAL = {"inbox_sender_unrecognised"}
-
-
-def _count_in(detail: str) -> str:
-    """The leading number in a finding, when it has one."""
-    for token in (detail or "").split():
-        if token.isdigit():
-            return token
-    return ""
 
 
 def _flag_list(row: Dict[str, Any]):
@@ -248,12 +238,7 @@ def _flag_list(row: Dict[str, Any]):
         return FLAG_ORDER.index(n) if n in FLAG_ORDER else -1
 
     for name in sorted(names, key=rank):
-        label = V.signal(name)
-        if name == "inbox_repeat_destination_requests":
-            n = _count_in((findings.get(name) or {}).get("detail", ""))
-            if n:
-                label = f"{n} earlier emails named an account"
-        flags.append(("warn", label))
+        flags.append(("warn", V.signal(name)))
     return flags
 
 
@@ -464,7 +449,11 @@ def render_inbox(rows: List[Dict[str, Any]]) -> str:
         flags = _risk_flags(r)
         supplier = r.get("vendor_id") or "not matched"
         note = MATCH_NOTE.get(r.get("match") or "", "")
-        third = (f'<td>{flags or _e(note) or "—"}</td>' if not drop else
+        # A routed message with no adverse flag is not a mystery: it is here
+        # because it named a payment destination. Falling back to WHO the
+        # sender is answered a different question than the column asks.
+        why = flags or _e(_humanise(r.get("reason"))) or _e(note) or "—"
+        third = (f'<td>{why}</td>' if not drop else
                  f'<td>{_e(V.verdict(r.get("verdict")))}'
                  f'<div class="note">{_e((r.get("reason") or "")[:90])}</div></td>')
         return (

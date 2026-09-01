@@ -82,23 +82,39 @@ def thread_depth_signal(depth: int, is_reply: bool) -> Optional[Signal]:
                   "mcp_inbox")
 
 
-def repeat_change_requests(priors: List[Dict[str, Any]]) -> Optional[Signal]:
-    """
-    This sender has asked about a payment destination before.
-
-    Deliberately NOT scored as reassuring, which is the tempting reading — "they
-    have done this before, it is routine". A sender who has repeatedly moved the
-    destination is the pattern behind the planted-account attack: the first
-    request gets an account onto the master and the second uses it. So the
-    signal fires on repetition and stays silent on a single prior.
-    """
-    if len(priors) < 2:
-        return None
-    return Signal("inbox_repeat_destination_requests", 2, WARN,
-                  f"{len(priors)} earlier message(s) from this sender also named "
-                  f"a payment destination; a sender who moves it repeatedly is "
-                  f"the shape of a foothold being reused",
-                  "mcp_inbox")
+# RETIRED: repeat_change_requests(). It counted earlier messages from a sender
+# that named a payment destination, and it fired on 70.0% of legitimate change
+# requests against 36.8% of fraud — it was measuring how long a relationship had
+# existed, because a typosquat has no history at all.
+#
+# Two attempts to save it, both measured on dev, both recorded rather than
+# quietly abandoned:
+#
+#   1  Count DISTINCT accounts rather than messages. This required fixing the
+#      inbox generator, which had been writing a fresh random account into every
+#      routine invoice while the template text said "unchanged" and "as held on
+#      your file". Worth doing on its own and now done — routine mail names the
+#      account on file, so a legitimate sender's history holds exactly one. It
+#      did not save the signal: legit 52.7%, fraud 24.9%.
+#
+#   2  Count prior accounts NOT on file, conditioned on the sender having any
+#      history. This finally points the right way — fraud 63.3%, legit 55.4% —
+#      and eight points is not a signal, it is noise with a preference.
+#
+# The ceiling is the corpus, not the threshold. 552 change requests over 90 days
+# across 301 domains means 107 of them ask to move the destination twice or more
+# in a single quarter; a real supplier does it once in several years. Change
+# requests are oversampled ~50x for statistical power, so any "has this sender
+# asked before?" signal is measuring the oversampling.
+#
+# It is not being re-tuned into something unmeasurable. V2.C set the precedent:
+# a component that survives only by being unmeasured is the exact defect this
+# project keeps finding. The planted-account attack it was meant to catch is
+# caught where it was always actually caught — select_verification_account()'s
+# seasoning and added_via checks, measured at 12/12 held.
+#
+# What would bring it back: a corpus with a realistic change-request base rate.
+# Nothing about the idea is wrong; the data cannot show it.
 
 
 def resolution_by_content(match: str) -> Optional[Signal]:
@@ -135,13 +151,17 @@ def collect(server, message, triage_result, is_reply: bool = False) -> List[Sign
     before = message.received_at or None
 
     history = server.search_history(domain, before=before)
-    priors = server.prior_change_requests(domain, before=before)
     depth = server.thread_depth(message.thread_id)
+
+    # prior_change_requests() is deliberately still an MCP tool and is
+    # deliberately no longer called here. The investigation agent may ask the
+    # mailbox that question; what was removed is the DETERMINISTIC signal that
+    # turned the answer into a hold, because the answer does not discriminate.
+    # See the retirement note above.
 
     signals = [
         first_contact(history),
         thread_depth_signal(depth, is_reply),
-        repeat_change_requests(priors),
         resolution_by_content(triage_result.match if triage_result else ""),
     ]
     return [s for s in signals if s is not None]

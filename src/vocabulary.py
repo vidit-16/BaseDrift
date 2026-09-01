@@ -97,13 +97,6 @@ SIGNAL = {
     "inbox_first_contact":   "First email ever from this sender",
     "inbox_sender_unrecognised": "Sender address not recognised",
     "inbox_thread_shallow":  "A reply with no conversation behind it",
-    # Named for what it MEASURES, not for what it was hoped to catch. The
-    # underlying check counts earlier messages from this sender that mentioned
-    # an account at all — routine invoices included — so "has moved the
-    # destination before" was a claim the data does not support. See NOTES.md.
-    "inbox_repeat_destination_requests":
-                             "Earlier emails from this sender also named an "
-                             "account",
 }
 
 RESULT = {
