@@ -34,8 +34,18 @@ jobs:
         # (seed 42), so CI reproduces the committed CSVs exactly.
         run: python data/generate_data.py
 
+      - name: Regenerate the inbox
+        # generate_inbox.py READS the rendered cases and adds noise around them,
+        # so it cannot void an extraction. It was not run here, which left the
+        # committed inbox free to drift from its generator unnoticed — the same
+        # blind spot that let a CRLF mismatch fail every build for two days.
+        run: python data/generate_inbox.py
+
       - name: Committed data still matches the generator
-        run: git diff --exit-code -- data/vendor_master.csv data/cases_dev.csv
+        run: |
+          git diff --exit-code -- data/vendor_master.csv data/vendor_accounts.csv \
+                                  data/cases_dev.csv data/inbox_dev.csv \
+                                  data/inbox_holdout.csv
 
       - name: Tests
         run: python tests/run_all.py
@@ -45,6 +55,9 @@ jobs:
 
       - name: Rules eval against baselines
         run: python eval/rules_eval.py
+
+      - name: Triage funnel, and the allowlist counterfactual
+        run: python eval/triage_eval.py
 
       - name: Base rates project without error
         run: python eval/base_rates.py

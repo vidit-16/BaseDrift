@@ -464,10 +464,59 @@ def test_the_audit_gets_the_provider_not_just_the_model():
     assert meta["usage"]["total_tokens"] == 1561
 
 
-def test_pinning_a_provider_forbids_silent_fallback():
+def test_pinning_never_permits_an_unnamed_host():
     """
-    Pinning that quietly falls back to another host is worse than not pinning:
-    the audit record would name one company while another served the call.
+    THE PROPERTY, and the one a first fix got wrong.
+
+    Replacing {"only": [host], "allow_fallbacks": False} with a bare ORDER
+    fixed the availability problem and broke the compliance one: `order` with
+    fallbacks enabled lets OpenRouter use a host that is NOT on the list once
+    the named ones are exhausted. That is an unassessed processor handling
+    payment data, which is precisely what the pin exists to prevent.
+
+    allow_fallbacks must stay False whatever the list length.
+    """
+    import llm_client as L
+    for value in ("DeepInfra", "CoreWeave,DeepInfra", " A , B , C "):
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {"choices": [{"message": {"content": "{}"},
+                                     "finish_reason": "stop"}]}
+
+        import requests, json as _json
+        real = requests.post
+
+        def spy(url, headers=None, data=None, timeout=None):
+            captured.update(_json.loads(data))
+            return FakeResponse()
+
+        requests.post = spy
+        try:
+            with _env(PAYEEPROOF_API_KEY="k", PAYEEPROOF_PROVIDER=value):
+                L.call("sys", "user", model="openai/gpt-oss-120b")
+        finally:
+            requests.post = real
+        prov = captured["provider"]
+        assert prov["allow_fallbacks"] is False, (value, prov)
+        assert prov["only"] == prov["order"], (value, prov)
+        assert all(h.strip() == h for h in prov["only"]), prov
+
+
+def test_a_pinned_provider_falls_through_to_the_next_named_host():
+    """
+    The first version sent {"only": [host], "allow_fallbacks": False}, which
+    made one host's rate limit a failed extraction: pinned to a busy provider
+    the call returned HTTP 429, R1 fired, and a legitimate payout was held.
+    Unpinned, the same request succeeded elsewhere seconds later.
+
+    An ORDER keeps the audit record honest — served_by still names whoever ran
+    the call — while letting a second NAMED host answer. Every host in the list
+    is a processor someone has to assess, which is why it is a list and not
+    "anyone".
     """
     import llm_client as L
     captured = {}
@@ -488,11 +537,47 @@ def test_pinning_a_provider_forbids_silent_fallback():
 
     requests.post = spy
     try:
-        with _env(PAYEEPROOF_API_KEY="k", PAYEEPROOF_PROVIDER="CoreWeave"):
+        with _env(PAYEEPROOF_API_KEY="k",
+                  PAYEEPROOF_PROVIDER="CoreWeave, DeepInfra",
+                  PAYEEPROOF_PROVIDER_STRICT=None):
             L.call("sys", "user", model="openai/gpt-oss-120b")
     finally:
         requests.post = real
-    assert captured["provider"] == {"only": ["CoreWeave"], "allow_fallbacks": False}
+    assert captured["provider"] == {"order": ["CoreWeave", "DeepInfra"],
+                                    "only": ["CoreWeave", "DeepInfra"],
+                                    "allow_fallbacks": False}, captured["provider"]
+
+
+def test_a_single_named_host_is_still_a_hard_pin():
+    """
+    Where a regime names exactly one processor, one entry in the list gives an
+    outage rather than quiet substitution. Same mechanism, no separate flag.
+    """
+    import llm_client as L
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "{}"},
+                                 "finish_reason": "stop"}]}
+
+    import requests, json as _json
+    real = requests.post
+
+    def spy(url, headers=None, data=None, timeout=None):
+        captured.update(_json.loads(data))
+        return FakeResponse()
+
+    requests.post = spy
+    try:
+        with _env(PAYEEPROOF_API_KEY="k", PAYEEPROOF_PROVIDER="DeepInfra"):
+            L.call("sys", "user", model="openai/gpt-oss-120b")
+    finally:
+        requests.post = real
+    assert captured["provider"]["only"] == ["DeepInfra"]
+    assert captured["provider"]["allow_fallbacks"] is False
 
 
 def test_no_provider_pin_sends_no_provider_field():

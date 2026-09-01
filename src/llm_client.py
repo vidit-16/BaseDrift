@@ -22,7 +22,11 @@ was true but untested. It is now one ENVIRONMENT VARIABLE, and exercised:
   PAYEEPROOF_API_KEY    key for that provider              (falls back to
                                                             GROQ_API_KEY)
   PAYEEPROOF_MODEL      pin a model id, skipping detection
-  PAYEEPROOF_PROVIDER   OpenRouter only: pin WHICH host serves the model
+  PAYEEPROOF_PROVIDER   OpenRouter only: the host(s) allowed to serve the
+                        model, comma separated and tried in order. NO host
+                        outside the list can ever serve a call. List one for a
+                        hard pin; list two for a named primary and a named
+                        fallback.
   PAYEEPROOF_CALL_GAP   seconds between calls (default 7.0, a Groq free-tier
                         figure that costs 90 minutes anywhere else)
 
@@ -213,12 +217,34 @@ def call(system_prompt, user_content, max_tokens=DEFAULT_MAX_TOKENS,
         ],
     }
 
-    # OpenRouter routes one model id across many hosts, so consecutive calls
-    # can be served by different companies. Pinning makes the audit record name
-    # one. Ignored by providers that do not understand the field.
-    pinned_provider = os.environ.get("PAYEEPROOF_PROVIDER", "").strip()
-    if pinned_provider:
-        payload["provider"] = {"only": [pinned_provider],
+    # OpenRouter routes one model id across many hosts, so consecutive calls can
+    # be served by different companies. Pinning makes the audit record name one.
+    # Ignored by providers that do not understand the field.
+    #
+    # ORDER, not `only`. The first version used {"only": [host],
+    # "allow_fallbacks": False}, which turned that one host's rate limit into a
+    # failed extraction: pinned to a busy provider the call returned HTTP 429,
+    # R1 fired, and a legitimate payout was held. Unpinned, the identical
+    # request succeeded elsewhere seconds later.
+    #
+    # That traded availability for auditability unconditionally, and it did not
+    # need to. An ORDER over several named hosts keeps both: the call falls
+    # through to the next host on the list, and served_by names whoever ran it.
+    #
+    # allow_fallbacks STAYS FALSE. `order` alone would let OpenRouter fall
+    # through to a host that is NOT on the list once the named ones are
+    # exhausted — an unnamed, unassessed processor handling payment data, which
+    # is the thing the pin exists to prevent. Every host that can serve a call
+    # must be one somebody put in the list on purpose.
+    #
+    # So the knob is how MANY named hosts, not whether an unnamed one may step
+    # in. One host is the strict pin; two is a named primary and a named
+    # fallback; the failure mode with a single busy host is what prompted this.
+    pinned = [h.strip() for h in
+              os.environ.get("PAYEEPROOF_PROVIDER", "").split(",") if h.strip()]
+    if pinned:
+        payload["provider"] = {"order": pinned,
+                               "only": pinned,
                                "allow_fallbacks": False}
     headers = {
         "Content-Type": "application/json",

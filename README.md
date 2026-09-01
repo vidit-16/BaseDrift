@@ -236,7 +236,7 @@ it is why the provider is configuration rather than code.
 | `PAYEEPROOF_BASE_URL` | provider root, OpenAI-compatible. Defaults to Groq |
 | `PAYEEPROOF_API_KEY` | key for that provider. Falls back to `GROQ_API_KEY` |
 | `PAYEEPROOF_MODEL` | pin a model id, skipping detection |
-| `PAYEEPROOF_PROVIDER` | routing layers only: pin *which host* serves the model |
+| `PAYEEPROOF_PROVIDER` | routing layers only: the host(s) allowed to serve the model, comma separated and tried in order. No host outside the list can serve a call |
 | `PAYEEPROOF_CALL_GAP` | seconds between calls. Default 7.0 |
 
 **`PAYEEPROOF_CALL_GAP` is the one to change first.** 7 seconds exists to stay
