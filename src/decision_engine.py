@@ -497,6 +497,52 @@ def check_gstin(ext: ExtractionResult, v: VendorRecord) -> Signal:
                   "email_body vs vendor_master")
 
 
+def _unanchored(v: VendorRecord, dest: str, prov: str, src: str
+                ) -> Optional[Signal]:
+    """
+    "On file" is not one thing, and treating it as one is how the trust store
+    gets poisoned.
+
+    AccountRecord's own docstring already says it: an account that entered the
+    master unverified is worthless as an anchor, because the destination would
+    be checked against a record an attacker could have written. That reasoning
+    was applied to the account a penny drop is demanded FROM (V2.6) and never to
+    the destination being paid TO — so an attacker who got an account onto the
+    master with one accepted email request could later ask for the money and
+    every identity check would pass, honestly, on a fact that was itself the
+    fraud. Measured: 19 of 35 such cases released. See NOTES.md V2.G.
+
+    The predicate is not "was this planted" — nothing can know that. It is
+    "has this account ever been confirmed by anything outside an email, or ever
+    actually carried a settlement". Neither is true of a planted account, both
+    are true of an onboarding account, and at least one is true of every
+    legitimate second account in this corpus.
+
+    INCONCLUSIVE, not WARN: this is "could not confirm", not "looks wrong", and
+    the project rule is that missing data never pushes a case toward rejection.
+    It holds the payout and asks a human, which is the whole design.
+
+    Returns None when there is nothing to object to, or when the account carries
+    no provenance at all — a caller that built a VendorRecord without
+    AccountRecords is not asserting the account is weak, it simply has not said.
+    """
+    a = v.account(dest)
+    if a is None:
+        return None
+    if a.verified_by not in ("", "unverified"):
+        return None
+    if a.settled_payout_count > 0:
+        return None
+    return Signal("account_continuity", 1, INCONCLUSIVE,
+                  f"{dest} ({prov}) is on file for this vendor but has never "
+                  f"been verified by anything outside email "
+                  f"(added_via {a.added_via or 'unrecorded'}, "
+                  f"verified_by {a.verified_by or 'unrecorded'}) and has never "
+                  f"settled a payout — being on file is not the same as being "
+                  f"established",
+                  f"{src} vs vendor_master")
+
+
 def check_account_continuity(ext: ExtractionResult, v: VendorRecord,
                               other_vendor_accounts=None,
                               destination_account_number: Optional[str] = None,
@@ -565,16 +611,18 @@ def check_account_continuity(ext: ExtractionResult, v: VendorRecord,
                           "vendor_master_crosscheck")
 
         if siblings and dest in v.all_known_accounts():
-            return Signal("account_continuity", 1, PASS,
-                          f"{dest} ({prov}) is a shared facility inside declared "
-                          f"group {v.group_id}, with "
-                          f"{', '.join(sorted(siblings))}",
-                          f"{src} vs vendor_master")
+            weak = _unanchored(v, dest, prov, src)
+            return weak or Signal("account_continuity", 1, PASS,
+                                  f"{dest} ({prov}) is a shared facility inside "
+                                  f"declared group {v.group_id}, with "
+                                  f"{', '.join(sorted(siblings))}",
+                                  f"{src} vs vendor_master")
 
     if dest in v.all_known_accounts():
-        return Signal("account_continuity", 1, PASS,
-                      f"{dest} ({prov}) is a known account for this vendor",
-                      f"{src} vs vendor_master")
+        weak = _unanchored(v, dest, prov, src)
+        return weak or Signal("account_continuity", 1, PASS,
+                              f"{dest} ({prov}) is a known account for this vendor",
+                              f"{src} vs vendor_master")
 
     return Signal("account_continuity", 1, WARN,
                   f"new account {dest} ({prov}) — known: {v.all_known_accounts()}",

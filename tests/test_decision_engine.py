@@ -29,7 +29,7 @@ from extractor import (  # noqa: E402
 from decision_engine import (  # noqa: E402
     decide, FAVResult, VendorRecord, AccountRecord, same_group,
     ALLOW, STEP_UP, BLOCK,
-    WARN as WARN_,
+    WARN as WARN_, PASS as PASS_, INCONCLUSIVE as INCONCLUSIVE_,
 )
 
 # ── Fixtures ──────────────────────────────────────────────────────────
@@ -578,6 +578,142 @@ def test_clean_change_to_known_account_allows():
 
 
 # ── Standalone runner ────────────────────────────────────────────────
+
+
+# ══ Being on file is not the same as being established ════════════════
+# The trust store is the root of trust for every check here, so the one way to
+# beat all of them at once is to poison it: get an account onto the master with
+# a single accepted email, wait, then ask for the money. Every identity check
+# then passes HONESTLY, on a fact that is itself the fraud.
+
+PLANTED = "133688561858"
+
+
+def _vendor_with(account: AccountRecord) -> VendorRecord:
+    return VendorRecord(
+        vendor_id="VEND0069", legal_name="Balaji Logistics",
+        gstin="07JQQPG8009O1Z2", known_domain="balajilogistic.com",
+        known_phone="9088190947", known_account_number=KNOWN_ACCT,
+        known_ifsc="KKBK0403467", avg_payout_amount=28000.0,
+        accounts=[AccountRecord(account_number=KNOWN_ACCT, is_primary=True,
+                                added_via="onboarding",
+                                verified_by="onboarding_kyc",
+                                settled_payout_count=39),
+                  account])
+
+
+def _pay_to(vendor, account_number):
+    e = ExtractionResult(ok=True, intent=INTENT_CHANGE,
+                         action=ACTION_REPLACE, scope=SCOPE_BOTH,
+                         proposed_account_number=account_number,
+                         sender_domain=vendor.known_domain, amount=28000.0)
+    return decide(e, FAVResult("active", "Balaji Logistics", 100), vendor,
+                  destination_account_number=account_number)
+
+
+def test_a_planted_account_does_not_pass_just_because_it_is_on_file():
+    """
+    Added by an email request, never verified by anything outside email, never
+    used to settle anything. Three facts the master already records and the
+    destination check used to ignore, because "in all_known_accounts()" was
+    treated as one thing.
+    """
+    v = _vendor_with(AccountRecord(account_number=PLANTED,
+                                   added_via="email_request",
+                                   verified_by="unverified",
+                                   settled_payout_count=0))
+    d = _pay_to(v, PLANTED)
+    assert d.payout_allowed is False, "a planted account was paid"
+    sig = [s for s in d.tier1 if s.name == "account_continuity"][0]
+    assert sig.result == INCONCLUSIVE_, sig.result
+
+
+def test_it_is_inconclusive_and_never_a_rejection():
+    """
+    "Could not confirm" is not "looks wrong". The project rule is that missing
+    data never pushes a case toward rejection, and an unverified account is
+    missing data about the account, not evidence against the vendor.
+    """
+    v = _vendor_with(AccountRecord(account_number=PLANTED,
+                                   added_via="email_request",
+                                   verified_by="unverified",
+                                   settled_payout_count=0))
+    d = _pay_to(v, PLANTED)
+    assert d.recommended_action != "reject"
+    assert d.outcome != BLOCK
+
+
+def test_an_account_that_has_actually_been_paid_is_established():
+    """
+    legit_added_then_paid: added by an email request, then used. A settlement
+    is real-world evidence the request was genuine — money went out and nobody
+    complained — so this must keep passing or every vendor who ever legitimately
+    added an account is held forever.
+    """
+    v = _vendor_with(AccountRecord(account_number=PLANTED,
+                                   added_via="email_request",
+                                   verified_by="unverified",
+                                   settled_payout_count=3))
+    sig = [s for s in _pay_to(v, PLANTED).tier1
+           if s.name == "account_continuity"][0]
+    assert sig.result == PASS_, sig.detail
+
+
+def test_an_account_verified_outside_email_is_established():
+    """A penny drop is exactly the evidence the unverified case lacks."""
+    v = _vendor_with(AccountRecord(account_number=PLANTED,
+                                   added_via="email_request",
+                                   verified_by="penny_drop",
+                                   settled_payout_count=0))
+    sig = [s for s in _pay_to(v, PLANTED).tier1
+           if s.name == "account_continuity"][0]
+    assert sig.result == PASS_, sig.detail
+
+
+def test_a_vendor_with_no_account_provenance_is_not_penalised():
+    """
+    A caller that built a VendorRecord without AccountRecords has not asserted
+    the account is weak — it simply has not said. Reading silence as suspicion
+    would hold every payout for anyone whose master lacks provenance columns.
+    """
+    v = VendorRecord(
+        vendor_id="VEND0069", legal_name="Balaji Logistics",
+        gstin="07JQQPG8009O1Z2", known_domain="balajilogistic.com",
+        known_phone="9088190947", known_account_number=KNOWN_ACCT,
+        known_ifsc="KKBK0403467", avg_payout_amount=28000.0)
+    sig = [s for s in _pay_to(v, KNOWN_ACCT).tier1
+           if s.name == "account_continuity"][0]
+    assert sig.result == PASS_, sig.detail
+
+
+def test_the_group_shared_branch_applies_the_same_test():
+    """
+    A shared facility inside a declared group returns early with PASS. An
+    unverified, never-settled account reached through that branch would skip
+    the anchor test entirely — the sort of hole a second return statement
+    creates and nothing notices.
+    """
+    a = AccountRecord(account_number=PLANTED, added_via="email_request",
+                      verified_by="unverified", settled_payout_count=0)
+    v = _vendor_with(a)
+    v.group_id = "GRP01"
+    sibling = VendorRecord(
+        vendor_id="VEND0123", legal_name="Balaji Freight",
+        gstin="07JQQPG8009O1Z3", known_domain="balajifreight.com",
+        known_phone="9088190948", known_account_number=PLANTED,
+        known_ifsc="KKBK0403467", avg_payout_amount=28000.0, group_id="GRP01")
+    e = ExtractionResult(ok=True, intent=INTENT_CHANGE,
+                         action=ACTION_REPLACE, scope=SCOPE_BOTH,
+                         proposed_account_number=PLANTED,
+                         sender_domain=v.known_domain, amount=28000.0)
+    d = decide(e, FAVResult("active", "Balaji Logistics", 100), v,
+               other_vendor_accounts={PLANTED: {"VEND0069", "VEND0123"}},
+               vendors={"VEND0069": v, "VEND0123": sibling},
+               destination_account_number=PLANTED)
+    sig = [s for s in d.tier1 if s.name == "account_continuity"][0]
+    assert sig.result == INCONCLUSIVE_, (
+        "the group branch released an unverified account")
+
 
 def main():
     tests = [(n, f) for n, f in sorted(globals().items())

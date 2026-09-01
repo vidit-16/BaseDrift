@@ -113,8 +113,17 @@ Groq free tier. No credit card. console.groq.com
   it: one person who can both verify and release approves their own request,
   and every control upstream becomes theatre. Rejection is deliberately NOT
   segregated — refusing to pay releases nothing.
-- Do not claim the inbox/MCP layer improves detection. Measured: Tier 2 decides
-  nothing on this corpus (R6 fires 0/552) and no evaluator exercises it. Its
+- Do not claim tier 2 catches fraud on this corpus. R6 is reachable as of V2.G
+  and fires 15 times on dev, all 15 legitimate. It is defence in depth for a
+  merchant master that lacks provenance columns, and its measured contribution
+  on complete synthetic data is zero catches for 15 held legitimate cases.
+- An account being ON FILE is not evidence it is established. If it was never
+  verified outside email and has never settled a payout, the destination check
+  returns INCONCLUSIVE — see _unanchored() and V2.G(d). Do not "simplify" that
+  back to a membership test: it is the only thing standing between a poisoned
+  vendor master and a released payout.
+- Do not claim the inbox/MCP layer improves detection. Measured: no evaluator
+  exercises it. Its
   dominant signal was retired after three variants failed to discriminate — see
   V2.E and V2.F. What it demonstrably provides is triage and evidence on screen.
 - Routine mail in the synthetic inbox must quote the vendor's is_primary
@@ -129,8 +138,8 @@ Groq free tier. No credit card. console.groq.com
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
 data generator + generated dev/holdout splits.
 
-264 tests across 8 suites, none needing an API key: `python tests/run_all.py`
-(decision_engine 39, eval_harness 9, extractor 42, render 17,
+270 tests across 8 suites, none needing an API key: `python tests/run_all.py`
+(decision_engine 45, eval_harness 9, extractor 42, render 17,
 verifier+pipeline 44, webhook 56, triage_inbox 35, casefile 22).
 
 An early version of this file claimed 38 unit tests when zero existed. The
@@ -1281,10 +1290,9 @@ V2.F  THE MAILBOX DID NOT MODEL A SUPPLIER USING THE SAME ACCOUNT TWICE
       rate. Nothing about the idea is wrong. The data cannot show it, and that
       is a statement about the data.
 
-      STILL OPEN, UNCHANGED BY ANY OF THIS: R6 remains unreachable, so no Tier 2
-      signal decides anything. That needs the missing scenario — identity fully
-      clean, a change requested, circumstances the only adverse evidence — and
-      that is a generate_data.py pass, which DOES void the extraction cache.
+      CLOSED BY V2.G: R6 is reachable now. The missing scenario was added
+      without voiding the extraction cache, and building it exposed a hole in
+      the trust store that was worth more than the scenario. Read V2.G.
 
 
 V2.D  THE OPERATOR DASHBOARD — CASE FILE, TWO-PERSON RULE, PLAIN LANGUAGE
@@ -1349,6 +1357,122 @@ V2.D  THE OPERATOR DASHBOARD — CASE FILE, TWO-PERSON RULE, PLAIN LANGUAGE
       and not append-only in storage. Production needs it durable and behind
       auth, alongside everything else in COMPLIANCE.md. The RULES would not
       change; only where they are written down.
+
+
+V2.G  R6 IS REACHABLE NOW, AND GETTING THERE FOUND A HOLE IN THE TRUST STORE
+
+      V2.E left one thing open: no tier-2 signal could decide anything, because
+      no case in the corpus could reach the rule that reads them. Fixed, and the
+      scenario that fixes it turned out to expose something worse.
+
+      (a) THE STATE THAT REACHES R6. Every scenario in the corpus proposed an
+          account the master had never seen, so account_continuity WARNed, so
+          R5 fired, so tier 2 was never read. R6 needs identity fully clean AND
+          the requested destination already on file. Two stories put a case
+          there, one per label, and they are indistinguishable on identity
+          evidence alone — which is the entire argument for having a tier 2:
+
+            legit_switch_to_known_account   a supplier with two accounts of
+                                            their own asks for payments to go
+                                            to the other one
+            fraud_exploit_planted_account   the SECOND HALF of the planted-
+                                            account attack: wait, then ask for
+                                            the money to go to the account you
+                                            already got onto the master
+
+      (b) APPENDED, NOT MIXED IN, AND THAT SAVED THE EXTRACTION CACHE. Adding a
+          scenario to SCENARIO_WEIGHTS re-draws every subsequent case, changing
+          every rendered email and every email sha256 — and the cache is keyed
+          on (email sha256, model, prompt hash), so all 800 would need
+          re-extracting: ~2 h paid, ~7 days on the free tier.
+
+          generate_extra_cases() runs from the stream position AFTER
+          split_dev_holdout, so the 800 existing cases keep their emails, their
+          hashes and their split membership. Verified: vendor_master.csv and
+          vendor_accounts.csv byte-identical, the first 552 rows of
+          cases_dev.csv byte-identical, 70 appended. The new scenarios use
+          accounts that already exist, which is why the accounts file does not
+          move. 100 extra cases, split 70/30 like everything else.
+
+      (c) WHAT R6 REACHABILITY IMMEDIATELY SHOWED. First measurement, before
+          any rule change, dev 622 cases:
+
+            R7_all_clear             39     (was 0)
+            R6_contextual_risk       31     (was 0)
+            recall                 93.8%    (was 100%)
+
+          19 of 35 fraud_exploit_planted_account cases were RELEASED. Every
+          identity check passed, and passed honestly: the account really is on
+          the vendor master, the name really matches, the GSTIN really is
+          theirs, and the sender really is their own domain because the mailbox
+          is compromised rather than spoofed. The trust store was not fooled. It
+          was POISONED, earlier, and was answering correctly about a fact that
+          was itself the fraud.
+
+          Tier 2 caught the other 16 — the first time in this project that a
+          tier-2 signal has changed an outcome.
+
+      (d) THE HOLE, AND THE FIX. "On file" was treated as one thing.
+          AccountRecord's own docstring already said it was not: "an account
+          that entered it unverified is worthless as an anchor, because the
+          destination would be checked against a record an attacker could have
+          written." That reasoning was applied to the account a penny drop is
+          demanded FROM (V2.6) and never to the destination being paid TO.
+
+          decision_engine._unanchored() now returns INCONCLUSIVE when the
+          destination is on file but has NEVER been verified by anything outside
+          email AND has never settled a payout. Not "was this planted" — nothing
+          can know that — but "has this account ever been confirmed by anything
+          outside an email, or ever actually carried a settlement". Neither is
+          true of a planted account; at least one is true of every legitimate
+          account in this corpus.
+
+          INCONCLUSIVE and not WARN, so it holds and never contributes to a
+          rejection. It applies to the group-shared branch too, which returns
+          early — six tests pin all of this, including the no-provenance case:
+          a VendorRecord built without AccountRecords has not asserted the
+          account is weak, it simply has not said, and reading silence as
+          suspicion would hold every payout for any merchant whose master lacks
+          provenance columns.
+
+      (e) AFTER THE FIX, dev 622 cases:
+
+                                    before scenarios   +scenarios   +fix
+            recall                       100.0%          93.8%     100.0%
+            precision                     85.1%          85.6%      86.4%
+            false BLOCK                    0.0%           0.0%       0.0%
+            false hold                    16.6%          15.1%      15.1%
+            held                          79.3%          75.4%      78.5%
+            R6 / R7 fired                  0 / 0         31 / 39    15 / 20
+
+          Recall is back at 100% and this time it is EARNED rather than assumed.
+          The corpus can now fail — it did fail, at 93.8% — and a rule closed it.
+
+          All 35 exploit cases are held at R5. 20 legitimate switches release
+          with no phone call at all, through R7_all_clear, a rule that had never
+          fired before.
+
+      (f) AND THE UNCOMFORTABLE PART, STATED RATHER THAN BURIED. With the
+          anchor rule in place, R6 now fires 15 times on this corpus and all 15
+          are LEGITIMATE — urgent language on an ordinary account switch. Tier 2
+          currently costs 15 held legitimate cases (2.4% of dev) and catches
+          nothing R5 does not already catch.
+
+          Keeping it is still the right call, and the reason is (d)'s last
+          paragraph: _unanchored() returns None when the master carries no
+          provenance. On a real merchant's data, where added_via and
+          settled_payout_count may simply not exist, R5 will not fire and R6 is
+          the only thing standing. It is defence in depth whose depth is
+          currently measurable at zero on synthetic data with a complete master.
+          Do not quote tier 2 as catching fraud on this corpus. It does not.
+
+      STILL NOT DONE: the holdout has NOT been re-scored since this rule change.
+      The number in V2.4 predates it. Score it once, at the end, and report it
+      with its size — do not re-score it while anything is still moving.
+
+      The extraction cache covers the original 800 only. The 100 new cases have
+      never been extracted, so eval/extraction_eval.py will make real API calls
+      for them the first time it runs — 100 cases, not 900.
 
 
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES
