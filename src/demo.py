@@ -22,6 +22,7 @@ import csv
 import hashlib
 import hmac
 import json
+import json as _json
 import os
 import sys
 import textwrap
@@ -212,10 +213,30 @@ def serve(store):
     import webhook
 
     os.environ.setdefault("RAZORPAY_WEBHOOK_SECRET", SECRET)
+
+    # Feed the inbox view a real morning's mail. The triage log then shows what
+    # was routed AND what was dropped, which is the part worth auditing — a
+    # funnel that only displays its successes is not showing its work.
+    import csv as _csv
+    import triage as _T
+    with open(os.path.join(DATA, "inbox_dev.csv"), newline="",
+              encoding="utf-8") as f:
+        rows = list(_csv.DictReader(f))
+    rows.sort(key=lambda r: float(r["received_at"]), reverse=True)
+    for r in rows[:220]:
+        store.ingest_message(_T.Message(
+            message_id=r["message_id"], from_addr=r["from_addr"],
+            subject=r["subject"], body=r["body"], thread_id=r["thread_id"],
+            received_at=float(r["received_at"]),
+            headers=_json.loads(r["headers"] or "{}"),
+            in_reply_to=r["in_reply_to"]))
+
     print()
     rule("─")
-    print("  The operator dashboard, holding the decisions above:")
-    print("    http://localhost:8000/            the queue")
+    print(f"  Inbox loaded: {len(store.triage_log)} messages triaged.")
+    print("  The operator dashboard:")
+    print("    http://localhost:8000/inbox       the mailbox, routed and dropped")
+    print("    http://localhost:8000/            the decision queue")
     print("    http://localhost:8000/case/pout_bec    the evidence table")
     print()
     print("  Ctrl-C to stop.")

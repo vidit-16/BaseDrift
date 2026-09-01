@@ -189,6 +189,11 @@ class Store:
         # system must not depend on having it.
         self.inbox = inbox
         self._triaged: set = set()
+        # What triage decided about each message, including the ones it DROPPED.
+        # The queue of routed messages is the operator's work; the dropped ones
+        # are how anyone checks that the funnel is not quietly discarding real
+        # requests — which is the failure this whole layer is most exposed to.
+        self.triage_log: Deque[Dict[str, Any]] = deque(maxlen=audit_limit * 5)
         self._seen_events: Dict[str, float] = {}
         # Decisions were computed and then discarded once the response was
         # written, which left nothing for an operator to review. Bounded and
@@ -202,6 +207,13 @@ class Store:
 
     def recent_audits(self, limit: int = 50):
         return list(self.audits)[:limit]
+
+    def audit_for_document(self, document_id: str) -> Optional[Dict[str, Any]]:
+        """The payout a routed message ended up deciding, if one has arrived."""
+        for a in self.audits:
+            if (a.get("document") or {}).get("document_id") == document_id:
+                return a
+        return None
 
     def find_audit(self, payout_id: str) -> Optional[Dict[str, Any]]:
         for a in self.audits:
@@ -276,7 +288,24 @@ class Store:
             return {"verdict": triage_mod.DUPLICATE, "document_id": None}
         result = triage_mod.triage(message, self.vendors, self._triaged)
 
+        def _log(document_id=None, signals=()):
+            self.triage_log.appendleft({
+                "message_id": message.message_id,
+                "from": message.from_addr,
+                "subject": message.subject,
+                "received_at": message.received_at,
+                "verdict": result.verdict,
+                "stage": result.stage,
+                "reason": result.reason,
+                "vendor_id": result.vendor_id,
+                "match": result.match,
+                "matched_domain": result.matched_domain,
+                "document_id": document_id,
+                "inbox_signals": [s.name for s in signals],
+            })
+
         if not result.routed:
+            _log()
             return {"verdict": result.verdict, "stage": result.stage,
                     "reason": result.reason, "document_id": None}
 
@@ -295,6 +324,7 @@ class Store:
                           triage={"match": result.match,
                                   "matched_domain": result.matched_domain,
                                   "candidates": result.candidates})
+        _log(document_id=doc_id, signals=signals)
         return {"verdict": result.verdict, "document_id": doc_id,
                 "vendor_id": result.vendor_id, "match": result.match,
                 "inbox_signals": [s.name for s in signals]}
@@ -338,6 +368,26 @@ class Store:
 
 
 # ── The "no document" evidence object ─────────────────────────────────
+
+def _demand(vendor, doc) -> Dict[str, Any]:
+    """
+    The account a penny drop would have to come from, and why that one.
+
+    Dated from the change request rather than from now: seasoning is measured
+    against when the request arrived, so an account added after it must not
+    count as established. Falls back to today only when there is no document.
+    """
+    as_of = time.strftime("%Y-%m-%d")
+    if doc and doc.get("received_at"):
+        as_of = time.strftime("%Y-%m-%d", time.gmtime(doc["received_at"]))
+    account, basis = verifier.select_verification_account(vendor, as_of)
+    return {
+        "account_number": account.account_number if account else None,
+        "basis": basis,
+        "as_of": as_of,
+        "available": account is not None,
+    }
+
 
 def no_document_evidence() -> ExtractionResult:
     """
@@ -506,6 +556,14 @@ def handle_payout_pending(raw_body: bytes,
         "extraction": ext.to_dict(),
         "decision": dec.to_dict(),
         "verification": ver.to_dict() if ver else None,
+        # WHAT WOULD RELEASE THIS, computed for the operator rather than for
+        # the handler. The webhook never attempts channel 2 — a penny drop
+        # takes days and the request has seconds — so verification_account is
+        # empty on this path. But the person who WILL make that call needs to
+        # know which account to demand, and computing it only when the channel
+        # already ran meant the answer existed everywhere except where someone
+        # could act on it.
+        "verification_demand": _demand(vendor, doc),
         "final_outcome": final,
         "payout_allowed": ver.payout_allowed if ver else dec.payout_allowed,
         "razorpay_actions": actions,
@@ -606,6 +664,23 @@ def create_app(store: Optional[Store] = None, fav_lookup=None):
     @app.get("/", response_class=HTMLResponse)
     async def decisions():
         return dashboard.render_index(app.state.store.recent_audits())
+
+    @app.get("/inbox", response_class=HTMLResponse)
+    async def inbox():
+        store = app.state.store
+        rows = []
+        for t in store.triage_log:
+            row = dict(t)
+            if t.get("document_id"):
+                a = store.audit_for_document(t["document_id"])
+                if a:
+                    row["payout_id"] = a.get("payout_id")
+                    row["final_outcome"] = a.get("final_outcome")
+                    row["rule_fired"] = (a.get("decision") or {}).get("rule_fired")
+                    row["recommended_action"] = (
+                        a.get("decision") or {}).get("recommended_action")
+            rows.append(row)
+        return HTMLResponse(dashboard.render_inbox(rows))
 
     @app.get("/case/{payout_id}", response_class=HTMLResponse)
     async def case_detail(payout_id: str):

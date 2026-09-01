@@ -566,6 +566,130 @@ def test_dashboard_lists_a_decision():
     assert "RECOMMEND REJECT" in body
 
 
+def test_the_case_view_names_the_account_to_demand_the_penny_drop_from():
+    """
+    THE CONTROL, and it was computed and rendered nowhere.
+
+    "Prove you control an account on file" lets an attacker use one they
+    planted months ago. Naming the account is the entire defence — so an
+    operator who cannot see WHICH account cannot perform the check that makes
+    the system work. verification_account sat in the audit record, unrendered.
+    """
+    import dataclasses, verifier, dashboard
+    from decision_engine import Decision, AccountRecord, STEP_UP
+    # The shared VENDOR fixture carries no accounts, so build one that can
+    # actually qualify: settled, seasoned, and added at onboarding.
+    seasoned = dataclasses.replace(VENDOR, accounts=[AccountRecord(
+        account_number=KNOWN_ACCT, ifsc="KKBK0403467",
+        added_on="2023-02-14", added_via="onboarding",
+        verified_by="onboarding_kyc", settled_payout_count=11,
+        is_primary=True)])
+    d = Decision(outcome=STEP_UP, rule_fired="R5", reason="held",
+                 triggered_by=[], needs_callback=True)
+    ver = verifier.verify(d, seasoned, False, "C1",
+                          requester_controls_accounts=[],
+                          as_of="2026-06-30")
+    assert ver.verification_account, "the verifier should have named one"
+
+    html = dashboard.render_case({
+        "payout_id": "pout_x", "decision": d.to_dict(),
+        "verification": ver.to_dict(), "final_outcome": STEP_UP,
+        "razorpay_actions": [],
+    })
+    assert ver.verification_account in html, "named account not shown"
+    assert "Rs 1 from" in html
+    assert ver.verification_account_basis[:24] in html, "no justification shown"
+
+
+def test_the_case_view_distinguishes_unavailable_from_failed():
+    """
+    Channel 2 unavailable is a THIRD state, not a quiet failure. An operator who
+    reads it as "the check failed" draws the opposite conclusion from the one
+    the evidence supports.
+    """
+    import dataclasses, verifier, dashboard
+    from decision_engine import Decision, AccountRecord, STEP_UP
+    bare = dataclasses.replace(VENDOR, accounts=[
+        AccountRecord(account_number="999900001111", settled_payout_count=0,
+                      is_primary=True)])
+    d = Decision(outcome=STEP_UP, rule_fired="R5", reason="held",
+                 triggered_by=[], needs_callback=True)
+    ver = verifier.verify(d, bare, True, "C1",
+                          requester_controls_accounts=[], as_of="2026-06-30")
+    assert ver.outcome == verifier.UNAVAILABLE_C2
+    html = dashboard.render_case({
+        "payout_id": "pout_y", "decision": d.to_dict(),
+        "verification": ver.to_dict(), "final_outcome": STEP_UP,
+        "razorpay_actions": [],
+    })
+    assert "No account qualifies" in html
+    assert "never falls back" in html
+
+
+def test_the_case_view_states_the_two_person_rule():
+    """
+    A single Approve button quietly removes segregation of duties. Stating the
+    requirement is the cheapest way to keep it visible while the workflow that
+    enforces it does not exist yet.
+    """
+    import dashboard
+    from decision_engine import Decision, STEP_UP
+    d = Decision(outcome=STEP_UP, rule_fired="R5", reason="held",
+                 triggered_by=[], needs_callback=True)
+    html = dashboard.render_case({
+        "payout_id": "p", "decision": d.to_dict(), "final_outcome": STEP_UP,
+        "verification": {"outcome": "UNREACHABLE", "contact_used": "9",
+                         "reason": "no answer"},
+        "razorpay_actions": [],
+    })
+    assert "Two people, not one" in html
+
+
+def test_the_inbox_view_shows_what_triage_dropped():
+    """
+    A funnel that displays only its successes is not showing its work. The
+    dropped messages are how anyone audits that it is not quietly discarding
+    real change requests — the failure this layer is most exposed to.
+    """
+    import triage as T
+    store = make_store(dest_account=NEW_ACCT)
+    store.ingest_message(T.Message(
+        message_id="<keep@x>", from_addr="accounts@balajilogistic.com",
+        subject="INV-1", body=f"Everything reaches {NEW_ACCT} (KKBK0403467).",
+        received_at=10.0))
+    store.ingest_message(T.Message(
+        message_id="<drop@x>", from_addr="offers@quickfundsindia.co",
+        subject="offer", body="Unlock working capital in 24 hours.",
+        received_at=20.0))
+    assert len(store.triage_log) == 2
+
+    import dashboard
+    html = dashboard.render_inbox(list(store.triage_log))
+    assert "Routed" in html and "Not routed" in html
+    assert "quickfundsindia.co" in html, "a dropped message is not shown"
+    assert "balajilogistic.com" in html
+
+
+def test_the_inbox_view_flags_how_the_vendor_was_matched():
+    """
+    "content" means the sender matched nothing and was resolved only from an
+    identifier in the body — which anyone can type. A reviewer needs that on
+    the row, not buried in a case page.
+    """
+    import triage as T, dashboard
+    store = make_store(dest_account=NEW_ACCT)
+    store.ingest_message(T.Message(
+        message_id="<c@x>", from_addr="ap@some-unrelated-parent.example",
+        subject="INV-9",
+        body=f"Our GST registration is {VENDOR.gstin}. "
+             f"Everything reaches {NEW_ACCT} (KKBK0403467).",
+        received_at=30.0))
+    row = list(store.triage_log)[0]
+    assert row["match"] == "content"
+    html = dashboard.render_inbox([row])
+    assert "matched only on an identifier in the body" in html
+
+
 def test_case_view_shows_the_signal_table():
     """
     The point of the dashboard: a held payout has to be explainable to the

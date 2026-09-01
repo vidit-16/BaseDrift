@@ -94,6 +94,18 @@ tr:hover td{background:var(--panel)}
 .kv dd{margin:0;font-family:ui-monospace,Menlo,monospace;font-size:12px}
 .empty{color:var(--dim);padding:40px 0;text-align:center;border:1px dashed var(--line);
   border-radius:4px}
+.demand{border:1px solid var(--accent);border-radius:8px;padding:14px 16px;
+  margin-bottom:14px;background:rgba(79,189,180,.07)}
+.demand.unavailable{border-color:var(--warn);background:rgba(217,160,72,.07)}
+.demand .acct{font-family:ui-monospace,Menlo,monospace;font-size:1.45rem;
+  letter-spacing:.04em;color:var(--ink);margin:6px 0}
+.duties{margin-top:14px;padding:11px 14px;border-left:3px solid var(--warn);
+  background:var(--panel-2);border-radius:0 6px 6px 0;font-size:.9rem;
+  color:var(--dim)}
+.duties strong{color:var(--ink)}
+.mrow{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:baseline}
+.msub{color:var(--faint);font-size:.82rem}
+.drop{opacity:.62}
 .note{color:var(--faint);font-size:12px;margin-top:6px}
 .reason{color:var(--dim);font-size:12.5px;margin-top:4px;max-width:80ch}
 code{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--dim)}
@@ -150,7 +162,8 @@ def render_index(audits: List[Dict[str, Any]]) -> str:
     rec = sum(1 for a in audits
               if a.get("decision", {}).get("recommended_action") == "reject")
     body = _header(f"{len(audits)} decisions · {held} not released"
-                   + (f" · {rec} recommended for rejection" if rec else ""))
+                   + (f" · {rec} recommended for rejection" if rec else ""),
+                   "<a href=\"/inbox\">← inbox</a>")
     body += "<h2>Decisions, newest first</h2><table><thead><tr>"
     for h in ("payout", "vendor", "destination", "document", "rule", "outcome"):
         body += f"<th>{h}</th>"
@@ -194,6 +207,99 @@ def _signal_rows(signals: List[Dict[str, Any]]) -> str:
     return out
 
 
+MATCH_NOTE = {
+    "exact":     "sender domain is in the vendor master",
+    "lookalike": "sender domain is built to be mistaken for a known one",
+    "content":   "sender is unknown — matched only on an identifier in the body",
+}
+
+
+def render_inbox(rows: List[Dict[str, Any]]) -> str:
+    """
+    The mailbox, as triage saw it.
+
+    Deliberately shows what was DROPPED alongside what was routed. The queue of
+    routed messages is the operator's work; the dropped ones are how anyone
+    checks the funnel is not quietly discarding real change requests — which is
+    the failure this layer is most exposed to, and the one a sceptical reviewer
+    should be able to audit rather than take on trust.
+    """
+    if not rows:
+        body = _header("inbox empty")
+        body += ("<div class=\"empty\">No messages triaged yet.<br>"
+                 "POST one to <code>/messages</code>, or run "
+                 "<code>python src/demo.py --serve</code>.</div>")
+        return _page("PayeeProof — inbox", body)
+
+    routed = [r for r in rows if r.get("verdict") == "ROUTE"]
+    dropped = [r for r in rows if r.get("verdict") != "ROUTE"]
+
+    body = _header(f"{len(rows)} messages · {len(routed)} reached the "
+                   f"decision engine",
+                   "<a href=\"/\">decisions →</a>")
+
+    body += ("<p class=\"note\">Every message the mailbox delivered. Triage "
+             "resolves the sender against the vendor master with no model call; "
+             "only what survives costs an extraction.</p>")
+
+    def row_html(r, drop=False):
+        cls = " class=\"drop\"" if drop else ""
+        payout = r.get("payout_id")
+        link = (f"<a href=\"/case/{_e(payout)}\">{_e(payout)}</a>"
+                if payout else "<span class=\"note\">no payout yet</span>")
+        match = r.get("match") or ""
+        badge = ""
+        if match in ("lookalike", "content"):
+            badge = (f"<span class=\"pill warn\">{_e(match)}</span>")
+        elif match == "exact":
+            badge = "<span class=\"pill muted\">exact</span>"
+        outcome = (_outcome_pill(r["final_outcome"])
+                   if r.get("final_outcome") else "")
+        rec = ("<span class=\"pill block\">RECOMMEND REJECT</span>"
+               if r.get("recommended_action") == "reject" else "")
+        return (
+            f"<tr{cls}>"
+            f"<td class=\"mono\">{_e(r.get('from'))}"
+            f"<div class=\"msub\">{_e(r.get('subject'))}</div></td>"
+            f"<td class=\"mono\">{_e(r.get('vendor_id') or '—')} {badge}"
+            f"<div class=\"note\">{_e(MATCH_NOTE.get(match, ''))}</div></td>"
+            f"<td class=\"mono\">{_e(r.get('rule_fired') or r.get('stage'))}"
+            f"<div class=\"note\">{_e((r.get('reason') or '')[:78])}</div></td>"
+            f"<td>{outcome}{rec}<div class=\"note\">{link}</div></td>"
+            "</tr>")
+
+    body += "<h2>Routed — a payout decision depends on these</h2>"
+    body += "<table><thead><tr>"
+    for h in ("from", "resolved to", "rule / stage", "outcome"):
+        body += f"<th>{h}</th>"
+    body += "</tr></thead><tbody>"
+    body += "".join(row_html(r) for r in routed) or \
+        "<tr><td colspan=\"4\" class=\"note\">none</td></tr>"
+    body += "</tbody></table>"
+
+    by_verdict: Dict[str, int] = {}
+    for r in dropped:
+        by_verdict[r.get("verdict")] = by_verdict.get(r.get("verdict"), 0) + 1
+    summary = " · ".join(f"{v} {k}" for k, v in sorted(by_verdict.items()))
+
+    body += f"<h2>Not routed — {_e(summary or 'none')}</h2>"
+    body += ("<p class=\"note\">A dropped message is not a released payout. "
+             "The payout.pending webhook fires either way; with no document R2 "
+             "rules on the real destination, so a known account passes, an "
+             "unseen one holds, and another vendor's account still fires R2c.</p>")
+    body += "<table><thead><tr>"
+    for h in ("from", "resolved to", "dropped at", "why"):
+        body += f"<th>{h}</th>"
+    body += "</tr></thead><tbody>"
+    body += "".join(row_html(r, drop=True) for r in dropped[:60]) or \
+        "<tr><td colspan=\"4\" class=\"note\">none</td></tr>"
+    body += "</tbody></table>"
+    if len(dropped) > 60:
+        body += f"<p class=\"note\">{len(dropped) - 60} more not shown.</p>"
+
+    return _page("PayeeProof — inbox", body)
+
+
 def render_case(a: Optional[Dict[str, Any]]) -> str:
     if a is None:
         body = _header("not found")
@@ -208,6 +314,7 @@ def render_case(a: Optional[Dict[str, Any]]) -> str:
     sem = ext.get("semantic", {}) if ext.get("ok") else {}
 
     body = _header(f"payout {a.get('payout_id')}",
+                   "<a href=\"/inbox\">inbox</a> · "
                    "<a href=\"/\">← all decisions</a>")
 
     body += ("<div class=\"card\">"
@@ -220,7 +327,8 @@ def render_case(a: Optional[Dict[str, Any]]) -> str:
     for label, value in (
         ("Vendor", a.get("vendor_id")),
         ("Destination account", dest.get("account_number")),
-        ("Destination came from", dest.get("source")),
+        ("Destination came from",
+         f"{dest.get('source')} — the payout's own fund account, never the email"),
         ("Fund account", dest.get("fund_account_id")),
         ("Amount", f"Rs {a['amount_rupees']:,.2f}" if a.get("amount_rupees") else "not stated"),
         ("Change request", doc.get("document_id") or "none on file"),
@@ -244,14 +352,55 @@ def render_case(a: Optional[Dict[str, Any]]) -> str:
         body += "</div>"
 
     ver = a.get("verification")
-    if ver:
-        body += ("<h2>Verification</h2><div class=\"card\"><dl class=\"kv\">"
+    demand = a.get("verification_demand") or {}
+    if ver or demand:
+        ver = ver or {}
+        body += "<h2>Verification — what would release this</h2><div class=\"card\">"
+
+        # THE CONTROL, and it was computed and never shown. "Prove you control
+        # an account on file" lets an attacker use one they planted; naming the
+        # account is the entire defence, so the operator has to see WHICH.
+        #
+        # Prefer what verification actually used; fall back to what it WOULD
+        # demand. On the webhook path channel 2 is never attempted inline, so
+        # without the fallback the answer is absent exactly where an operator
+        # would act on it.
+        named = ver.get("verification_account") or demand.get("account_number")
+        basis = ver.get("verification_account_basis") or demand.get("basis")
+        if named:
+            body += ("<div class=\"demand\">"
+                     "<div class=\"note\">Ask the vendor to send Rs 1 from "
+                     "this account, and no other:</div>"
+                     f"<div class=\"acct\">{_e(named)}</div>"
+                     f"<div class=\"note\">chosen because {_e(basis)}</div>"
+                     "</div>")
+        elif (ver.get("outcome") == "CHANNEL_2_UNAVAILABLE"
+              or demand.get("available") is False):
+            body += ("<div class=\"demand unavailable\">"
+                     "<div class=\"acct\">No account qualifies</div>"
+                     f"<div class=\"note\">{_e(basis)}</div>"
+                     "<div class=\"note\">This is not the same as the check "
+                     "failing. Nothing can be asked for, so it escalates and "
+                     "never falls back to the phone call.</div></div>")
+
+        body += ("<dl class=\"kv\">"
                  f"<dt>Outcome</dt><dd>{_e(ver.get('outcome'))}</dd>"
-                 f"<dt>Contact used</dt><dd>{_e(ver.get('contact_used'))}</dd>"
-                 f"<dt>Contact source</dt><dd>{_e(ver.get('contact_source'))}</dd>"
+                 f"<dt>Callback to</dt><dd>{_e(ver.get('contact_used'))}</dd>"
+                 f"<dt>Number came from</dt><dd>{_e(ver.get('contact_source'))}"
+                 " — never a number in the request</dd>"
                  f"<dt>Attempts</dt><dd>{_e(ver.get('attempts'))}</dd>"
+                 f"<dt>Escalated</dt><dd>{_e(ver.get('escalated'))}</dd>"
                  "</dl>"
-                 f"<div class=\"reason\">{_e(ver.get('reason'))}</div></div>")
+                 f"<div class=\"reason\">{_e(ver.get('reason'))}</div>")
+
+        # Segregation of duties, stated as a requirement rather than pretending
+        # anyone has done it. A single "Approve" button quietly removes this.
+        body += ("<div class=\"duties\"><strong>Two people, not one.</strong> "
+                 "Whoever records the verification outcome must not be whoever "
+                 "releases the payout. A compromised or complicit AP clerk who "
+                 "can do both approves their own request, and the control is "
+                 "theatre.</div>")
+        body += "</div>"
 
     body += "<h2>What this maps to at RazorpayX</h2><div class=\"card\">"
     for act in a.get("razorpay_actions", []):
