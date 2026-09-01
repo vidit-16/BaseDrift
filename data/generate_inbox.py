@@ -129,7 +129,7 @@ def _ifsc(rng):
         "".join(rng.choices("0123456789", k=6))
 
 
-def _noise_message(rng, vendors, vendor_ids, seq):
+def _noise_message(rng, vendors, vendor_ids, seq, primary=None):
     """
     One message that is NOT a beneficiary change request.
 
@@ -176,8 +176,26 @@ def _noise_message(rng, vendors, vendor_ids, seq):
             "@" + vendor["known_domain"]
         pool = {"invoice": INVOICE, "statement": STATEMENT,
                 "chaser": CHASER, "logistics": LOGISTICS}[kind]
-        body = rng.choice(pool).format(inv=inv, inv2=inv + 7, amt=amt,
-                                       acct=_acct(rng), ifsc=_ifsc(rng))
+        # THE ACCOUNT A ROUTINE MESSAGE QUOTES IS THE ONE ON FILE.
+        #
+        # These templates say "unchanged", "as held on your file" and "as
+        # usual", and used to fill that in with a freshly random number. The
+        # text and the data contradicted each other, and the consequence was
+        # not cosmetic: a legitimate supplier's mailbox history named twenty-odd
+        # DISTINCT accounts, only 4.9% of which were on file. Destination churn
+        # became unmeasurable, because every sender looked like they changed
+        # account on every message. See NOTES.md V2.E.
+        #
+        # The rng draws still happen so the stream is unchanged and only the
+        # account numbers move — shifting the stream would resample every
+        # message and silently void the triage numbers already recorded.
+        template = rng.choice(pool)          # drawn FIRST, as it always was
+        fallback_acct, fallback_ifsc = _acct(rng), _ifsc(rng)
+        on_file = (primary or {}).get(vendor["vendor_id"])
+        body = template.format(
+            inv=inv, inv2=inv + 7, amt=amt,
+            acct=on_file[0] if on_file else fallback_acct,
+            ifsc=on_file[1] if on_file else fallback_ifsc)
         subject = {"invoice": f"INV-{inv}", "statement": "Statement of account",
                    "chaser": f"INV-{inv}", "logistics": f"PO-{inv}"}[kind]
 
@@ -205,6 +223,14 @@ def build_inbox(split="dev"):
         vendors = {r["vendor_id"]: r for r in csv.DictReader(f)}
     with open(os.path.join(HERE, f"cases_{split}.csv"), encoding="utf-8") as f:
         rows = {r["case_id"]: r for r in csv.DictReader(f)}
+
+    # {vendor_id: (account, ifsc)} for the account each vendor actually settles
+    # to, so routine mail quotes it rather than a random number.
+    primary = {}
+    with open(os.path.join(HERE, "vendor_accounts.csv"), encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            if r["is_primary"] == "True":
+                primary[r["vendor_id"]] = (r["account_number"], r["ifsc"])
 
     messages = []
 
@@ -234,7 +260,7 @@ def build_inbox(split="dev"):
 
     vendor_ids = sorted(vendors)
     for i in range(len(messages) * NOISE_PER_CASE):
-        messages.append(_noise_message(rng, vendors, vendor_ids, i))
+        messages.append(_noise_message(rng, vendors, vendor_ids, i, primary))
 
     rng.shuffle(messages)
     return messages
