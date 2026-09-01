@@ -915,6 +915,167 @@ def scenario_fraud_thread_hijack(vendor, case_id, ctx):
     return c
 
 
+# ── The destination is ALREADY ON FILE ────────────────────────────────
+#
+# Every scenario above proposes an account the vendor master has never seen, so
+# check_account_continuity WARNs, so R5 fires, so tier 2 is never read. Measured
+# on 552 dev cases before these were added: R6_contextual_risk fired 0 times and
+# R7_all_clear 0 times. Four tier-2 checks and every inbox signal were computed,
+# stored, rendered — and could not affect an outcome, because no case in the
+# corpus could reach the rule that consults them. See NOTES.md V2.E.
+#
+# The state that reaches R6 is narrow and entirely realistic: identity fully
+# clean AND the requested destination already on the vendor's file. Two stories
+# put a case in it, one of each label, and they are indistinguishable on
+# identity evidence alone — which is the point of having a tier 2 at all.
+
+def _extra_pools(vendors, ctx):
+    """
+    Vendors that can carry the two 'already on file' stories.
+
+    Computed here rather than in _build_context because both pools depend on
+    accounts the CASES added — a second account from legit_add_account, a
+    planted one from fraud_planted_account. At context-build time neither
+    exists yet.
+    """
+    switchable, exploitable = [], []
+    for v in vendors:
+        accts = ctx["by_vendor"].get(v["vendor_id"], [])
+        spare = [a for a in accts
+                 if not a["is_primary"] and a["status"] == "active"
+                 and a["account_number"] not in ctx["planted"]]
+        planted = [a for a in accts if a["account_number"] in ctx["planted"]]
+        if spare:
+            switchable.append((v, spare))
+        if planted:
+            exploitable.append((v, planted))
+    return switchable, exploitable
+
+
+def _clean_identity(c):
+    """
+    Force every tier-1 check to PASS.
+
+    _base draws FAV from _fav(), which returns a non-active status 6% of the
+    time and withholds the name 7% of the time. Either one is INCONCLUSIVE, and
+    either one sends the case to R5 — so a scenario whose whole purpose is to
+    reach R6 has to pin them. Left to chance, roughly one case in eight would
+    silently land somewhere else and the per-scenario n would mislead.
+    """
+    c.update({
+        "fav_account_status": "active",
+        "fav_name_available": True,
+        "registered_name_returned": c["registered_name_returned"],
+        "name_match_score": 100,
+        "hedged_gstin": False,
+    })
+    return c
+
+
+def scenario_legit_switch_to_known_account(vendor, spare, case_id, ctx):
+    """
+    A supplier with two accounts of their own asks for payments to go to the
+    other one.
+
+    Nothing here is adverse. The destination is on their file, the identity
+    checks all pass, and the request is ordinary — this is the case that SHOULD
+    be released without a phone call, and until now the corpus contained no
+    version of it that could reach the rule that releases things.
+
+    Some of them carry ordinary commercial urgency. That is deliberate: a
+    supplier chasing a quarter-end payment is not a fraud signal, and if every
+    case that reaches tier 2 is clean then tier 2's false-positive cost never
+    gets measured either.
+    """
+    account = random.choice(spare)
+    c = _clean_identity(
+        _base(vendor, case_id, "legit_switch_to_known_account", "legit", ctx))
+    c.update({
+        "proposed_account_number": account["account_number"],
+        "proposed_ifsc": account["ifsc"],
+        "urgency_language": random.random() < 0.35,
+        "channel_manipulation": random.random() < 0.08,
+        "amount": _amount_near(vendor["avg_payout_amount"], 0.08),
+        "callback_reaches_known_contact": True,
+    })
+    return c
+
+
+def scenario_fraud_exploit_planted_account(vendor, planted, case_id, ctx):
+    """
+    THE SECOND HALF OF THE PLANTED-ACCOUNT ATTACK, and the hardest case here.
+
+    fraud_planted_account models the attacker getting account B onto the master
+    and then asking for the money to go somewhere else. This models what a
+    patient attacker does instead: wait, and then ask for the money to go to B.
+
+    Every identity check passes, and passes HONESTLY. B really is on the vendor
+    master. The name really does match. The GSTIN really is the vendor's. The
+    sender really is the vendor's own domain, because the mailbox is
+    compromised rather than spoofed. The trust store is not being fooled — it
+    has been POISONED, earlier, and it is now answering correctly about a fact
+    that is itself the fraud.
+
+    So no tier-1 check can catch this, by construction. What is left is tier 2:
+    urgency, a redirected reply-to, an amount out of pattern. When the attacker
+    supplies none of those, this corpus expects the payout to be RELEASED, and
+    that is not a defect in the scenario — it is the residual risk, stated
+    where it can be counted instead of described in a caveat.
+
+    The callback still reaches the real vendor, who never sent this. So the
+    cases that ARE held are caught. The ones released are never asked.
+    """
+    account = random.choice(planted)
+    c = _clean_identity(
+        _base(vendor, case_id, "fraud_exploit_planted_account", "fraud", ctx))
+    c.update({
+        "proposed_account_number": account["account_number"],
+        "proposed_ifsc": account["ifsc"],
+        # A patient attacker writes a boring email. Weighted low on purpose:
+        # tuning these up until the rules catch everything would be designing
+        # the exam around the student.
+        "urgency_language": random.random() < 0.30,
+        "channel_manipulation": random.random() < 0.20,
+        "amount": _amount_near(vendor["avg_payout_amount"], 0.06),
+        "callback_reaches_known_contact": True,
+        "requester_controls_accounts": account["account_number"],
+    })
+    return c
+
+
+def generate_extra_cases(vendors, ctx, start_index, n=100):
+    """
+    The 'already on file' cases, appended AFTER the main corpus is split.
+
+    Appended rather than mixed in, and that is a deliberate constraint rather
+    than laziness. Adding a scenario to SCENARIO_WEIGHTS re-draws every
+    subsequent case, which changes every rendered email, which changes every
+    email sha256, which voids the entire extraction cache — 800 cases, roughly
+    seven days against the free tier. Generating these from the stream position
+    AFTER the split leaves all 800 existing cases and their split membership
+    byte-identical, so only the new cases have ever needed extraction.
+    """
+    switchable, exploitable = _extra_pools(vendors, ctx)
+    if not switchable or not exploitable:
+        raise RuntimeError(
+            "no vendor can carry the 'already on file' scenarios; the corpus "
+            "generated no spare or planted accounts, and skipping them "
+            "silently would leave R6 unreachable with nothing saying so")
+
+    cases = []
+    for i in range(n):
+        idx = start_index + i
+        if i % 2 == 0:
+            v, spare = random.choice(switchable)
+            cases.append(scenario_legit_switch_to_known_account(
+                v, spare, f"CASE{idx:05d}", ctx))
+        else:
+            v, planted = random.choice(exploitable)
+            cases.append(scenario_fraud_exploit_planted_account(
+                v, planted, f"CASE{idx:05d}", ctx))
+    return cases
+
+
 SCENARIO_FUNCS = {
     "fraud_easy": scenario_fraud_easy,
     "fraud_hard": scenario_fraud_hard,
@@ -1070,15 +1231,26 @@ def main():
     write_csv(os.path.join(here, "vendor_accounts.csv"), ctx["accounts"])
 
     dev, holdout = split_dev_holdout(cases, holdout_frac=0.30)
+
+    # The 'already on file' cases, generated and split AFTER the main corpus so
+    # that every one of the 800 above keeps its rendered email, its sha256 and
+    # its split membership. See generate_extra_cases for why that matters.
+    extra = generate_extra_cases(vendors, ctx, start_index=len(cases), n=100)
+    extra_dev, extra_holdout = split_dev_holdout(extra, holdout_frac=0.30)
+    dev += extra_dev
+    holdout += extra_holdout
+
     write_csv(os.path.join(here, "cases_dev.csv"), dev)
     write_csv(os.path.join(here, "cases_holdout.csv"), holdout)
 
     def summarize(name, rows):
         fraud = sum(1 for r in rows if r["label"] == "fraud")
         print(f"{name}: {len(rows)} cases, {fraud} fraud / {len(rows) - fraud} legit")
-        for t in SCENARIO_WEIGHTS:
+        types = list(SCENARIO_WEIGHTS) + ["legit_switch_to_known_account",
+                                          "fraud_exploit_planted_account"]
+        for t in types:
             count = sum(1 for r in rows if r["scenario_type"] == t)
-            print(f"   {t:20s} {count}")
+            print(f"   {t:30s} {count}")
 
     grouped = sum(1 for v in vendors if v["group_id"])
     per_vendor = {}
