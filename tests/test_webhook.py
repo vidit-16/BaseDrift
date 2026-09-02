@@ -868,6 +868,113 @@ def test_the_case_page_offers_the_penny_drop_against_the_named_account():
         assert named in body
 
 
+def test_the_case_shows_how_each_account_got_onto_the_file():
+    """
+    The engine holds a payout because an account is "on file but never
+    established". That sentence is unauditable unless the operator can see the
+    four facts it rests on — when the account was added, how, what verified it,
+    and whether it has ever carried money.
+
+    Deliberately scoped to this vendor's accounts rather than a browsable
+    vendor master: the master is what a planted-account attack corrupts, and a
+    screen inviting someone to eyeball it and conclude the request looks fine
+    is the reasoning that attack defeats.
+    """
+    from decision_engine import AccountRecord, VendorRecord
+    import dataclasses
+    store = make_store(dest_account=KNOWN_ACCT)
+    # The fixture vendor deliberately carries no AccountRecords — most tests
+    # here predate them. This one needs a master that records provenance,
+    # because a master that does not is exactly the case the panel must not
+    # invent an answer for.
+    store.vendors[VENDOR.vendor_id] = dataclasses.replace(
+        VENDOR, accounts=[
+            AccountRecord(account_number=KNOWN_ACCT, ifsc="KKBK0403467",
+                          is_primary=True, added_on="2022-10-16",
+                          added_via="onboarding", verified_by="onboarding_kyc",
+                          settled_payout_count=39),
+            AccountRecord(account_number=NEW_ACCT, ifsc="SBIN0000002",
+                          added_on="2026-05-01", added_via="email_request",
+                          verified_by="unverified", settled_payout_count=0),
+        ])
+    client = _client(store)
+    _fire(client, store, KNOWN_ACCT, "pout_prov")
+    a = store.find_audit("pout_prov")
+    rows = a.get("accounts_on_file")
+    assert rows, "the audit carries no account provenance"
+    dest = [r for r in rows if r["is_destination"]]
+    assert len(dest) == 1, "the destination is not identified among the accounts"
+
+    body = client.get("/case/pout_prov").text
+    assert "Accounts on file" in body
+    for r in rows:
+        assert r["account_number"] in body, r["account_number"]
+    assert "This payment" in body
+
+
+def test_the_panel_says_when_the_destination_is_none_of_them():
+    """
+    The commonest hold. Listing the known accounts without saying the money is
+    going somewhere else reads as though nothing is wrong.
+    """
+    import dashboard
+    html = dashboard.render_case({
+        "payout_id": "p", "final_outcome": "STEP_UP_VERIFY",
+        "decision": {"rule_fired": "R5_tier1_inconclusive", "reason": "held"},
+        "destination": {"account_number": "555000111", "source": "razorpay_payout"},
+        "accounts_on_file": [
+            {"account_number": "111", "ifsc": "H", "status": "active",
+             "is_primary": True, "is_destination": False, "added_on": "2022-01-01",
+             "added_via": "onboarding", "verified_by": "onboarding_kyc",
+             "settled_payout_count": 12, "established": True}]})
+    assert "not one of the accounts above" in html
+    assert "555000111" in html
+
+
+def test_an_unestablished_account_is_marked_as_such_on_the_page():
+    """
+    The whole point of the panel. An account that reached the file because one
+    email asked for it, with nothing outside email confirming it and no payout
+    ever settled, must not look identical to one that has been paid for years.
+    """
+    import dashboard
+    a = {"payout_id": "pout_x", "final_outcome": "STEP_UP_VERIFY",
+         "decision": {"rule_fired": "R5_tier1_inconclusive", "reason": "held"},
+         "destination": {"account_number": "999", "source": "razorpay_payout"},
+         "accounts_on_file": [
+             {"account_number": "111", "ifsc": "HDFC0000001", "status": "active",
+              "is_primary": True, "is_destination": False,
+              "added_on": "2022-10-16", "added_via": "onboarding",
+              "verified_by": "onboarding_kyc", "settled_payout_count": 39,
+              "established": True},
+             {"account_number": "999", "ifsc": "SBIN0000002", "status": "active",
+              "is_primary": False, "is_destination": True,
+              "added_on": "2026-05-01", "added_via": "email_request",
+              "verified_by": "unverified", "settled_payout_count": 0,
+              "established": False},
+         ]}
+    html = dashboard.render_case(a)
+    assert "Never established" in html
+    assert "Added because of an email request" in html
+    assert "Verified at onboarding (KYC)" in html
+    assert "Never verified outside email" in html
+    # And the identifiers stay out of the operator's way.
+    assert ">email_request<" not in html
+    assert ">onboarding_kyc<" not in html
+
+
+def test_a_vendor_with_no_recorded_provenance_shows_no_panel():
+    """
+    Silence is not suspicion. A merchant whose master lacks these columns gets
+    no panel rather than a table of blanks implying everything is unverified.
+    """
+    import dashboard
+    html = dashboard.render_case(
+        {"payout_id": "p", "final_outcome": "ALLOW",
+         "decision": {"rule_fired": "R7_all_clear", "reason": "clean"}})
+    assert "Accounts on file" not in html
+
+
 def test_unknown_case_does_not_error():
     assert _client(make_store()).get("/case/pout_nope").status_code == 200
 

@@ -425,6 +425,35 @@ class Store:
 
 # ── The "no document" evidence object ─────────────────────────────────
 
+def _accounts_on_file(vendor, destination: Optional[str]) -> List[Dict[str, Any]]:
+    """
+    Every account the master holds for this vendor, with the four facts that
+    decide whether it is established: when it was added, how, what verified it,
+    and whether it has ever actually carried money.
+
+    `established` is computed HERE from the same predicate decision_engine uses,
+    rather than being restated in the template. A screen that draws its own
+    conclusion about the evidence can disagree with the engine, and then the
+    audit record and the operator are looking at two different systems.
+    """
+    out = []
+    for a in getattr(vendor, "accounts", []) or []:
+        verified = a.verified_by not in ("", "unverified")
+        out.append({
+            "account_number": a.account_number,
+            "ifsc": a.ifsc,
+            "status": a.status,
+            "is_primary": a.is_primary,
+            "is_destination": a.account_number == destination,
+            "added_on": a.added_on,
+            "added_via": a.added_via,
+            "verified_by": a.verified_by,
+            "settled_payout_count": a.settled_payout_count,
+            "established": verified or a.settled_payout_count > 0,
+        })
+    return out
+
+
 def _demand(vendor, doc) -> Dict[str, Any]:
     """
     The account a penny drop would have to come from, and why that one.
@@ -603,6 +632,16 @@ def handle_payout_pending(raw_body: bytes,
             "account_number": fa.account_number,
             "source": "razorpay_fund_account",
         },
+        # HOW EACH ACCOUNT ON FILE GOT THERE, which is what _unanchored()
+        # decides on. The operator was being shown a verdict about the vendor
+        # master without being shown the part of the master the verdict turned
+        # on — so "on file but never established" was a sentence they had to
+        # take on trust. This is deliberately NOT a browsable vendor master:
+        # it is the evidence behind this decision, on this payout. The master
+        # is the thing being attacked, and a screen inviting someone to eyeball
+        # it and conclude the request looks fine is the reasoning the planted-
+        # account case exists to refute.
+        "accounts_on_file": _accounts_on_file(vendor, fa.account_number),
         "document": {
             "document_id": doc_id,
             "correlation": ("explicit_note" if explicit and doc

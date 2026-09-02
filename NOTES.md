@@ -138,9 +138,9 @@ Groq free tier. No credit card. console.groq.com
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
 data generator + generated dev/holdout splits.
 
-270 tests across 8 suites, none needing an API key: `python tests/run_all.py`
+273 tests across 8 suites, none needing an API key: `python tests/run_all.py`
 (decision_engine 45, eval_harness 9, extractor 42, render 17,
-verifier+pipeline 44, webhook 56, triage_inbox 35, casefile 22).
+verifier+pipeline 44, webhook 59, triage_inbox 35, casefile 22).
 
 An early version of this file claimed 38 unit tests when zero existed. The
 claim was removed at the time rather than quietly left in place; the suites
@@ -1465,6 +1465,24 @@ V2.G  R6 IS REACHABLE NOW, AND GETTING THERE FOUND A HOLE IN THE TRUST STORE
           the only thing standing. It is defence in depth whose depth is
           currently measurable at zero on synthetic data with a complete master.
           Do not quote tier 2 as catching fraud on this corpus. It does not.
+
+      (g) AND THE OPERATOR CAN NOW SEE IT. "On file but never established" is
+          an unauditable sentence unless the four facts it rests on are on the
+          screen, so the case view lists this supplier's accounts with when each
+          was added, how, what verified it, and how many payouts it has carried.
+          `established` is computed in webhook._accounts_on_file() from the same
+          predicate the engine uses, never restated in the template — a screen
+          that draws its own conclusion about the evidence can disagree with the
+          engine, and then the audit record and the operator are looking at two
+          different systems.
+
+          DELIBERATELY NOT A BROWSABLE VENDOR MASTER. Only this vendor's
+          accounts, only on the case they bear on. The master is the thing a
+          planted-account attack corrupts, and a screen inviting an operator to
+          eyeball it and conclude the request looks fine is the exact reasoning
+          V2.G(c) exists to refute. A vendor whose master carries no provenance
+          gets no panel rather than a table of blanks implying everything is
+          unverified — same principle as _unanchored() returning None.
 
       STILL NOT DONE: the holdout has NOT been re-scored since this rule change.
       The number in V2.4 predates it. Score it once, at the end, and report it

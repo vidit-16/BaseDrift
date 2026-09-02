@@ -126,6 +126,27 @@ SOURCE = {
     "llm_extraction":                    "Read from the message",
 }
 
+# ── How an account got onto the file ─────────────────────────────────
+#
+# The difference between these is the difference between a trust store and a
+# list of numbers somebody emailed in.
+
+ADDED_VIA = {
+    "onboarding":    "At onboarding",
+    "portal":        "Added through the supplier portal",
+    "email_request": "Added because of an email request",
+    "phone_request": "Added after a phone call",
+}
+
+VERIFIED_BY = {
+    "onboarding_kyc": "Verified at onboarding (KYC)",
+    "penny_drop":     "Verified by a rupee from the account",
+    "callback":       "Verified by a callback",
+    "unverified":     "Never verified outside email",
+    "":               "Never verified outside email",
+}
+
+
 # ── Triage ───────────────────────────────────────────────────────────
 
 VERDICT = {
@@ -197,3 +218,11 @@ def verification(code):
 
 def match(code):
     return MATCH.get(code, (_fallback(code), ""))
+
+
+def added_via(code):
+    return ADDED_VIA.get(code, _fallback(code))
+
+
+def verified_by(code):
+    return VERIFIED_BY.get(code, _fallback(code))

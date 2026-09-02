@@ -105,6 +105,7 @@ tr:hover td{background:var(--panel)}
   border-color:rgba(217,160,72,.3)}
 .flag.bad{background:rgba(228,119,111,.14);color:var(--fail);
   border-color:rgba(228,119,111,.35)}
+.flag{background:var(--panel-2);color:var(--dim);border-color:var(--line)}
 .mail{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
   padding:16px 18px;white-space:pre-wrap;line-height:1.6;
   font-size:13.5px;color:var(--ink);overflow-x:auto}
@@ -695,6 +696,76 @@ def _case_actions_panel(payout_id: str, actions, actor: str,
     return body
 
 
+def _accounts_panel(a: Dict[str, Any]) -> str:
+    """
+    The accounts on file, and how each one got there.
+
+    Deliberately not a browsable vendor master. It shows the accounts THIS
+    decision turned on, because the master is the thing being attacked and a
+    screen that invites an operator to eyeball it and conclude the request
+    looks fine is the exact reasoning a poisoned trust store defeats.
+
+    What it does buy: "on file but never established" stops being a sentence
+    the operator has to take on trust. An account added because somebody sent
+    an email, never verified by anything outside email, and never used to pay
+    anyone, looks different on the page from one that has settled thirty-nine
+    payouts since onboarding — which is the whole of the engine's reasoning,
+    made visible rather than asserted.
+    """
+    rows = a.get("accounts_on_file") or []
+    if not rows:
+        return ""
+
+    body = "<h2>Accounts on file for this supplier</h2><div class=\"card\">"
+    body += "<table><thead><tr>"
+    for h in ("Account", "Added", "Verified", "Settled", ""):
+        body += f"<th>{h}</th>"
+    body += "</tr></thead><tbody>"
+
+    for r in rows:
+        marks = ""
+        if r.get("is_destination"):
+            marks += '<span class="flag warn">This payment</span>'
+        if r.get("is_primary"):
+            marks += '<span class="flag">Primary</span>'
+        if not r.get("established"):
+            marks += '<span class="flag bad">Never established</span>'
+        settled = r.get("settled_payout_count") or 0
+        body += (
+            f'<tr><td class="mono">{_e(r.get("account_number"))}'
+            f'<div class="note">{_e(r.get("ifsc"))} · '
+            f'{_e(r.get("status"))}</div></td>'
+            f'<td>{_e(V.added_via(r.get("added_via")))}'
+            f'<div class="note">{_e(r.get("added_on") or "date not recorded")}</div></td>'
+            f'<td>{_e(V.verified_by(r.get("verified_by")))}</td>'
+            f'<td class="mono">{settled}'
+            f'<div class="note">{"payouts" if settled != 1 else "payout"}</div></td>'
+            f"<td>{marks}</td></tr>")
+    body += "</tbody></table>"
+
+    # The commonest case, and the panel used to stay silent about it: the
+    # destination is none of these. Listing the known accounts without saying
+    # so reads as though nothing is wrong, which is the opposite of the truth.
+    if not any(r.get("is_destination") for r in rows):
+        dest = (a.get("destination") or {}).get("account_number")
+        body += ('<div class="step">This payment is going to '
+                 f'<strong>{_e(dest or "an unresolved account")}</strong>, '
+                 'which is not one of the accounts above. That is what the '
+                 'destination check reports, and why the payment is held.</div>')
+
+    weak = [r for r in rows if not r.get("established")]
+    if weak:
+        body += ('<div class="note">An account is <strong>established</strong> '
+                 'once something outside email has confirmed it — onboarding '
+                 'checks, a rupee from the account, a callback — or once it has '
+                 'actually carried a payout. Being on file is not the same '
+                 'thing: an account can be on file because one email asked for '
+                 'it and nobody checked. The engine treats those as unconfirmed '
+                 'rather than as wrong, so they hold rather than reject.</div>')
+    body += "</div>"
+    return body
+
+
 def _case_history(actions) -> str:
     if not actions:
         return ""
@@ -846,6 +917,8 @@ def render_case(a: Optional[Dict[str, Any]], case=None, actor: str = "",
     ):
         body += f"<dt>{_e(label)}</dt><dd>{_e(value)}</dd>"
     body += "</dl></div>"
+
+    body += _accounts_panel(a)
 
     for tier, label in (("tier1", "Identity checks — against your supplier records"),
                         ("tier2", "Circumstances — never decisive on their own")):
