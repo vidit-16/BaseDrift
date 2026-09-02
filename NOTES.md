@@ -149,8 +149,8 @@ Groq free tier. No credit card. console.groq.com
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
 data generator + generated dev/holdout splits.
 
-284 tests across 8 suites, none needing an API key: `python tests/run_all.py`
-(decision_engine 45, eval_harness 9, extractor 42, render 17,
+289 tests across 8 suites, none needing an API key: `python tests/run_all.py`
+(decision_engine 45, eval_harness 9, extractor 47, render 17,
 verifier+pipeline 44, webhook 66, triage_inbox 38, casefile 23).
 
 An early version of this file claimed 38 unit tests when zero existed. The
@@ -1740,6 +1740,82 @@ V2.K  THE DEMO WAS TWO WORLDS THAT BARELY TOUCHED
       Also fixed while there: the index called recent_audits() with its default
       page size of 50, which silently truncated a 73-row queue so the count on
       screen disagreed with the inbox beside it.
+
+
+V2.L  THE ADD/REPLACE MISREAD, AND TWO MISTAKES MADE FIXING IT
+
+      legit_add_account was the weakest narrative in the corpus: 23/25 dev,
+      9/12 holdout. Every miss was the same distinction, in two directions —
+      ADD read as REPLACE + FUTURE_ONLY (losing that the old account still
+      receives things), or as NONE (anchoring on a clause confirming one
+      invoice was unaffected and never reaching the clause introducing a new
+      account).
+
+      It mattered because action is read in exactly ONE place: R4, which also
+      requires `deception`, which only a lookalike domain sets. A legitimate
+      vendor writes from their own domain, so these cases could not reach R4
+      however the action was read. That is why the eval never caught it, and it
+      is luck rather than design — ADD misread as REPLACE is the one direction
+      that can manufacture a rejection recommendation.
+
+      THE FIX: a procedure, not another definition. "After the change described,
+      will ANY payment still reach the old account? If yes ADD, if no REPLACE."
+      Plus the point the model kept losing — scope answers a different question,
+      and narrowing the new account to later invoices does not make the action
+      REPLACE.
+
+        25 dev ADD cases, three runs each, because one pass is one sample:
+          old prompt   22.3/25 mean (89.3%), range 21-24
+          new prompt   25.0/25 mean (100.0%), range 25-25
+        Neither has a case failing in every run, so the old prompt's misses were
+        variance rather than a fixed blind spot.
+
+        Holdout, never tuned against: 9/12 -> 12/12.
+        Both splits: intent, action and scope all 100%, 900/900 cases.
+
+      MISTAKE 1 — THE FIRST FIX WAS CHEATING AND SCORED IDENTICALLY. It read
+      "Only work billed from next quarter comes to the new facility", against
+      render.py's "Only work billed from next quarter onward comes to the
+      facility above." That is ablation corpus v1 again, one layer along: the
+      trigger lists written to match the paraphrases. A 100% earned that way
+      measures memorisation of the test set.
+
+      Rewriting the rule abstractly reproduced the same 100%, which is the only
+      reason it can be believed. tests/test_extractor.py now fails if any four
+      consecutive words of SYSTEM_PROMPT appear in a render.py template, and the
+      guard was verified by feeding it a borrowed phrase.
+
+      MISTAKE 2 — THE FIX INTRODUCED A REGRESSION. 8 of 900 extractions (0.9%)
+      returned malformed JSON where the old prompt returned none: five
+      "Expecting ',' delimiter", two "Expecting value", one "Invalid control
+      character". The likely cause is an unescaped quote inside urgency_phrases
+      or channel_manipulation_phrases, which quote the email back — and a longer
+      prompt draws longer phrase lists.
+
+      call_json now RESAMPLES ONCE and deliberately does NOT repair. With an
+      unescaped quote you cannot tell where the string was meant to end, so a
+      repair can silently change what the model said about a payment, and
+      evidence quietly rewritten is worse than evidence missing — the audit
+      record stops being a record. All 8 recovered on the resample; both splits
+      now report 0.0% extraction failures. Four tests pin it, including that a
+      persistently malformed response STILL fails (resampling must not become a
+      way of never failing) and that transport errors are not resampled here,
+      since call() already retries those.
+
+      AND THE REFERENCE STOPPED BEING AN UPPER BOUND. Dev real precision is now
+      86.6% against the rules-only reading's 86.4%. That is not a broken
+      baseline this time: features_to_extraction leaves hedging and channel
+      manipulation at clean defaults because the generator does not model them,
+      so the real extractor reads MORE of the rendered email than the reference
+      does. rules_eval.py already warned that an upper bound the real system
+      beats is not an upper bound; the wording is corrected rather than the
+      number explained away.
+
+      Claim recovery moved with it: account 95.0 -> 99.8% dev and 95.3 -> 100%
+      holdout, IFSC 95.0 -> 99.5% and 95.3 -> 99.6%. GSTIN slipped 97.7 -> 96.6%
+      and 97.8 -> 95.7%, and channel recall 72.3 -> 70.2% and 63.6 -> 61.0%.
+      Both are Tier 2 or claim-only and neither moved an outcome, but they moved
+      the wrong way and are recorded rather than left for someone to find.
 
 
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES

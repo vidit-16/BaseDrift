@@ -655,6 +655,105 @@ def test_the_prompt_does_not_quote_the_corpus_it_is_scored_on():
     assert R.BANNED_VOCABULARY, "the renderer's trigger list vanished"
 
 
+def test_a_malformed_response_is_resampled_not_repaired():
+    """
+    Measured over 900 extractions, 8 responses (0.9%) were malformed JSON —
+    mostly an unescaped quote inside the phrase arrays, which quote the email
+    back, and email text contains quotes.
+
+    The response is asked for again rather than patched. With an unescaped
+    quote you cannot tell where the string was meant to end, so a repair can
+    silently change what the model said about a payment, and evidence that has
+    been quietly rewritten is worse than evidence that is missing.
+    """
+    calls = []
+    good = '{"intent": "PAYMENT_FOLLOWUP", "action": "NONE", "scope": "NONE"}'
+    bad = '{"intent": "PAYMENT_FOLLOWUP", "urgency_phrases": ["he said "now""]}'
+
+    def flaky(system, user, **kw):
+        calls.append(1)
+        return (bad if len(calls) == 1 else good), None
+
+    real = llm_client.call
+    llm_client.call = flaky
+    try:
+        parsed, err = llm_client.call_json("sys", "doc")
+    finally:
+        llm_client.call = real
+
+    assert err is None, f"resample did not recover: {err}"
+    assert parsed["intent"] == "PAYMENT_FOLLOWUP"
+    assert len(calls) == 2, f"expected one resample, made {len(calls)} calls"
+
+
+def test_a_persistently_malformed_response_still_fails():
+    """
+    Resampling must not become a way of never failing. If the model keeps
+    returning something unparseable, that is an extraction failure, it resolves
+    to R1 and the payout is held — the safe state. Retrying forever, or
+    inventing a result, would both be worse.
+    """
+    calls = []
+    bad = '{"intent": "PAYMENT_FOLLOWUP", "urgency_phrases": ["he said "now""]}'
+
+    def always_bad(system, user, **kw):
+        calls.append(1)
+        return bad, None
+
+    real = llm_client.call
+    llm_client.call = always_bad
+    try:
+        parsed, err = llm_client.call_json("sys", "doc")
+    finally:
+        llm_client.call = real
+
+    assert parsed is None
+    assert err and "JSON parse failed" in err
+    assert len(calls) == llm_client.JSON_ATTEMPTS, (
+        f"made {len(calls)} calls for {llm_client.JSON_ATTEMPTS} attempts")
+
+
+def test_a_transport_error_is_not_resampled_here():
+    """
+    call() already retries transport failures with backoff. Resampling them
+    again at this layer would multiply the retries and hide a genuine outage
+    behind a longer wait.
+    """
+    calls = []
+
+    def down(system, user, **kw):
+        calls.append(1)
+        return None, "network error: boom"
+
+    real = llm_client.call
+    llm_client.call = down
+    try:
+        parsed, err = llm_client.call_json("sys", "doc")
+    finally:
+        llm_client.call = real
+
+    assert parsed is None and "network error" in err
+    assert len(calls) == 1, f"transport error was resampled {len(calls)} times"
+
+
+def test_the_first_good_response_costs_only_one_call():
+    """The 99.1% path must not pay for the 0.9% one."""
+    calls = []
+
+    def fine(system, user, **kw):
+        calls.append(1)
+        return '{"intent": "PAYMENT_FOLLOWUP"}', None
+
+    real = llm_client.call
+    llm_client.call = fine
+    try:
+        parsed, err = llm_client.call_json("sys", "doc")
+    finally:
+        llm_client.call = real
+
+    assert err is None and len(calls) == 1
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]

@@ -171,7 +171,7 @@ COMPLIANCE.md           what production would have to satisfy, and why
                         anonymisation is not available to this design
 NOTES.md                the working log: every v2 item, what it measured, and
                         what it does not show
-tests/                  284 tests across 8 suites, none needing an API key
+tests/                  289 tests across 8 suites, none needing an API key
                         run them all: python tests/run_all.py
 tools/snapshot.py       freezes the dashboard into docs/ as static HTML,
                         so it can be shared without exposing POST routes
@@ -209,7 +209,7 @@ python data/generate_inbox.py   # the AP inbox around those cases
 Everything below this line runs with **no API key**:
 
 ```
-python tests/run_all.py       # 284 tests across 8 suites
+python tests/run_all.py       # 289 tests across 8 suites
 python eval/rules_eval.py     # rule scoring vs baselines
 python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
 python eval/base_rates.py     # daily call volume vs the null baseline
@@ -673,7 +673,16 @@ is real, the integration is not.
 `eval/rules_eval.py` assumes perfect extraction. This measures the gap.
 `data/render.py` turns each case row into the message a finance team would have
 received; `eval/extraction_eval.py` runs the real model over them and compares
-the result against the rules-only upper bound.
+the result against the rules-only reference reading.
+
+**That reference is not a ceiling, and this run is what proved it.** The
+reference reading is built from the generator's features, and it deliberately
+leaves hedging and channel manipulation at clean defaults because the generator
+does not model them. The real extractor reads those out of the rendered email,
+so it sees *more* than the reference does and can land on either side of it — on
+dev it scores **86.6% precision against the reference's 86.4%**. `rules_eval.py`
+already carried the warning that an upper bound the real system beats is not an
+upper bound; the wording is now corrected rather than the number explained away.
 
 **The leakage guard comes first, because the README already records this project
 making that exact mistake once.** Ablation corpus v1 scored the keyword baseline
@@ -698,24 +707,24 @@ changes right and all 115 follow-ups wrong.)
 
 | | dev (622) | holdout (278) |
 |---|---|---|
-| intent | 99.8% | 99.6% |
-| action | 99.7% | 98.9% |
-| scope | 99.8% | 99.6% |
-| all three exact | **99.7%** | **98.9%** |
-| account · IFSC · GSTIN · domain | 95.0% · 95.0% · 97.7% · 97.4% | 95.3% · 95.3% · 97.8% · 96.0% |
+| intent | **100%** | **100%** |
+| action | **100%** | **100%** |
+| scope | **100%** | **100%** |
+| all three exact | **100%** | **100%** |
+| account · IFSC · GSTIN · domain | 99.8% · 99.5% · 96.6% · 97.4% | 100% · 99.6% · 95.7% · 96.0% |
 | amount | 100% | 100% |
-| urgency (precision / recall) | 89.6% / 100% | 86.9% / 100% |
-| channel manipulation | 100% / **72.3%** | 100% / **63.6%** |
+| urgency (precision / recall) | 89.1% / 100% | 84.4% / 100% |
+| channel manipulation | 100% / **70.2%** | 100% / **61.0%** |
 | extraction failed | **0.0%** | **0.0%** |
 
 **End to end the extractor costs nothing, on both splits:**
 
 | | recall | precision | false BLOCK | same rule as ideal |
 |---|---|---|---|---|
-| dev — rules-only bound | 100% | 86.4% | 0.0% | — |
-| **dev — with real extraction** | **100%** | **86.4%** | **0.0%** | **98.9%** |
-| holdout — rules-only bound | 100% | 87.7% | 0.0% | — |
-| **holdout — with real extraction** | **100%** | **87.7%** | **0.0%** | **98.9%** |
+| dev — rules-only reference | 100% | 86.4% | 0.0% | — |
+| **dev — with real extraction** | **100%** | **86.6%** | **0.0%** | **98.9%** |
+| holdout — rules-only reference | 100% | 87.7% | 0.0% | — |
+| **holdout — with real extraction** | **100%** | **87.7%** | **0.0%** | **99.3%** |
 
 That is not luck, it is the architecture doing what it was built to do. Identity
 never comes from the extracted claims — the destination is read from the payout's
@@ -724,13 +733,20 @@ signals the model *does* miss are corroborating ones: channel manipulation at
 72.3% recall can downgrade a rejection recommendation to a plain hold, never a
 hold to a release.
 
-**The weakest narrative, named rather than averaged away.** `legit_add_account`
-scores 23/25 on dev and 9/12 on the holdout, and every miss is the same one:
-`ADD_FUND_ACCOUNT` read as `REPLACE_PAYOUT_DESTINATION` or as `NONE`. That
-distinction is what R4's design rests on. It changed no outcome in either split
-only because R5 holds those cases anyway — which is luck, not robustness, and is
-the first thing to fix if this extractor is relied on more heavily. The n is
-small on both sides, so the dev/holdout gap is not a split difference.
+**The weakest narrative was `legit_add_account`, and it is fixed.** It scored
+23/25 on dev and 9/12 on the holdout, every miss being `ADD_FUND_ACCOUNT` read
+as `REPLACE_PAYOUT_DESTINATION` or as `NONE` — the distinction R4's design rests
+on. The prompt now states a procedure rather than another definition: *after the
+change described, will any payment still reach the old account?* Measured over
+three runs on the 25 dev ADD cases, 22.3/25 (89.3%, range 21–24) became 25/25
+(100%, no spread), and the holdout — which the fix was never tuned against —
+went 9/12 to **12/12**.
+
+The first version of that fix scored the same 100% while quoting `render.py`'s
+own template almost verbatim, which would have measured memorisation of the test
+corpus rather than the rule. Rewriting it abstractly reproduced the result, and
+a test now fails if any four consecutive words of the prompt appear in a
+renderer template.
 
 **Two findings from building it, both mine rather than the model's.** Scoring
 initially showed 90% on account numbers; every miss was a follow-up where the
@@ -1129,7 +1145,7 @@ to prevent.
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency handling; document correlation; the rules evaluation and the
 ablation; the operator dashboard; the inbox triage funnel and its MCP tool
-layer; the case file and its server-side two-person rule; 284 tests.
+layer; the case file and its server-side two-person rule; 289 tests.
 
 **Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
 vendor lookups that would be API reads. FAV results are replayed

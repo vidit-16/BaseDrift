@@ -10,8 +10,12 @@ directly from the generator's ground-truth features, so the LLM never runs.
   - A pass here says nothing about whether the extractor can recover those
     features from real prose. That is a separate question, measured separately.
 
-Do not quote this number as end-to-end performance. It is an upper bound the
-extractor can only erode.
+Do not quote this number as end-to-end performance. It is a REFERENCE reading,
+not a ceiling: features_to_extraction leaves hedging and channel manipulation at
+clean defaults because the generator does not model them, so the real extractor
+sees MORE of the rendered email than this does and can land either side of it.
+Measured on dev with prompt 6b4bcefc0560: real precision 86.6% against this
+reading's 86.4%.
 
 Free, instant, deterministic — which is the point. Threshold tuning that needs a
 live model costs an hour per iteration and is not reproducible run to run.
@@ -311,8 +315,8 @@ def report(results, split, n):
     print("=" * 78)
     print(f"RULES EVAL — {split} split, {n} cases, perfect extraction (no LLM)")
     print("=" * 78)
-    print("This measures the DECISION ENGINE only. It is an upper bound;")
-    print("the extractor can only erode it. Not an end-to-end figure.")
+    print("This measures the DECISION ENGINE only, on a reference reading —")
+    print("not a ceiling, and not an end-to-end figure. See the module docstring.")
     print()
     print(f"  {'system':36s} {'recall':>7s} {'prec':>6s} {'held':>7s} "
           f"{'rec.rej':>8s} {'FALSE BLOCK':>12s} {'false hold':>11s}")

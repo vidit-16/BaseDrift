@@ -311,16 +311,8 @@ def call(system_prompt, user_content, max_tokens=DEFAULT_MAX_TOKENS,
     return text, None
 
 
-def call_json(system_prompt, user_content, **kwargs):
-    """
-    Same as call(), but parses JSON out of the response.
-    Returns (dict, error). Tolerates markdown fences and surrounding prose.
-    Accepts and forwards `meta` — see call().
-    """
-    text, err = call(system_prompt, user_content, **kwargs)
-    if err:
-        return None, err
-
+def _extract_json(text):
+    """(parsed, error). Tolerates markdown fences and surrounding prose."""
     cleaned = re.sub(r"^```(?:json)?\s*", "", text)
     cleaned = re.sub(r"\s*```$", "", cleaned)
 
@@ -333,6 +325,44 @@ def call_json(system_prompt, user_content, **kwargs):
         return json.loads(cleaned), None
     except json.JSONDecodeError as e:
         return None, f"JSON parse failed ({e}): {cleaned[:200]}"
+
+
+JSON_ATTEMPTS = 2
+
+
+def call_json(system_prompt, user_content, attempts=JSON_ATTEMPTS, **kwargs):
+    """
+    Same as call(), but parses JSON out of the response.
+    Returns (dict, error). Accepts and forwards `meta` — see call().
+
+    RESAMPLES ONCE ON A PARSE FAILURE, AND DOES NOT REPAIR THE JSON.
+
+    Measured over 900 extractions: 8 responses (0.9%) were malformed — five
+    "Expecting ',' delimiter", two "Expecting value", one "Invalid control
+    character". The dominant class is almost certainly an unescaped quote
+    inside urgency_phrases or channel_manipulation_phrases, which quote the
+    email back, and email text contains quotes.
+
+    Repairing that is guesswork: with an unescaped quote you cannot tell where
+    the string was meant to end, so a "fix" can silently change what the model
+    said about a payment. Evidence that has been quietly rewritten is worse
+    than evidence that is missing, because the audit record stops being a
+    record. Resampling asks the same question again and takes an answer that
+    parses — the output is non-deterministic, so a second sample usually does.
+
+    A parse failure is still a failure if the retry also fails. It resolves to
+    R1_extraction_failed and the payout is held, which is the safe state.
+    """
+    last = None
+    for _ in range(max(1, attempts)):
+        text, err = call(system_prompt, user_content, **kwargs)
+        if err:
+            return None, err
+        parsed, perr = _extract_json(text)
+        if perr is None:
+            return parsed, None
+        last = perr
+    return None, last
 
 
 def pace():
