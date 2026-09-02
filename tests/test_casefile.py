@@ -155,6 +155,20 @@ def test_a_contested_case_cannot_be_released_by_anyone():
         assert not ok, f"{actor} released a contested case"
 
 
+def test_a_contested_case_says_why_it_is_contested():
+    """
+    Both the contested check and the not-verified check refuse this, so the
+    refusal survives losing either one — but they give different reasons, and
+    "verification did not hold up" is a different instruction to an operator
+    than "nothing is verified yet". The second sounds like a step was skipped;
+    the first says the supplier failed it. Asserting the message is what makes
+    the contested branch load-bearing rather than decorative.
+    """
+    ok, why = C.may_release(_case(("callback_denied", "priya")), "rahul")
+    assert not ok
+    assert "did not hold up" in why, why
+
+
 def test_a_resolved_case_cannot_be_released_again():
     actions = _case(("callback_confirmed", "priya"), ("released", "rahul"))
     ok, _ = C.may_release(actions, "meera")

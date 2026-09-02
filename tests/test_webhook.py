@@ -838,6 +838,20 @@ def test_an_invented_action_is_refused_not_recorded():
     assert store.case("pout_bogus") == []
 
 
+def test_an_action_on_a_payout_with_no_decision_mints_no_case():
+    """
+    The action endpoint has no authentication in front of it. Creating a case
+    file for any id somebody posts would be unbounded growth for free, and a
+    case that no decision produced is not a case anyone can work.
+    """
+    store = make_store()
+    client = _client(store)
+    r = client.post("/case/pout_does_not_exist/action",
+                    data={"action": "callback_confirmed", "actor": "Priya Menon"})
+    assert r.status_code == 200
+    assert store.case_actions == {}, "a case file was minted for a phantom payout"
+
+
 def test_a_closed_case_accepts_nothing_further():
     store = make_store(dest_account=NEW_ACCT)
     client = _client(store)

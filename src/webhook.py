@@ -209,8 +209,16 @@ class Store:
         self.case_actions: Dict[str, List[Dict[str, Any]]] = {}
 
     def case(self, payout_id: str) -> List[Dict[str, Any]]:
-        """The case file for a payout, created empty on first look."""
-        return self.case_actions.setdefault(payout_id, [])
+        """
+        The case file for a payout. READING ONE DOES NOT CREATE IT.
+
+        setdefault here meant every GET of a case page minted a case file,
+        including for payout ids that do not exist — free unbounded growth on an
+        endpoint with no authentication in front of it. Writers call
+        record_case_action(), which creates the entry only after checking that a
+        decision exists to work on.
+        """
+        return self.case_actions.get(payout_id, [])
 
     def record_case_action(self, payout_id: str, action: str, actor: str,
                            note: str = "", detail: str = "") -> Dict[str, Any]:
@@ -222,9 +230,18 @@ class Store:
         mistake; only this stops someone who crafts the request by hand, and the
         two-person rule is worth nothing if it can be skipped with curl.
         """
-        actions = self.case(payout_id)
         a = self.find_audit(payout_id)
-        final = (a or {}).get("final_outcome")
+        if a is None:
+            # No decision, no case to work. Without this, posting to an
+            # arbitrary payout id would mint a case file for a payout that
+            # does not exist — on an endpoint that has no authentication in
+            # front of it, that is unbounded growth for free. See COMPLIANCE.md
+            # section 3.
+            raise PermissionError(
+                "No decision has been recorded for that payout, so there is "
+                "nothing to work.")
+        actions = self.case_actions.setdefault(payout_id, [])
+        final = a.get("final_outcome")
         if action == "released":
             ok, why = casefile.may_release(actions, actor, final)
             if not ok:
