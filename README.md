@@ -171,7 +171,7 @@ COMPLIANCE.md           what production would have to satisfy, and why
                         anonymisation is not available to this design
 NOTES.md                the working log: every v2 item, what it measured, and
                         what it does not show
-tests/                  217 tests across 7 suites, none needing an API key
+tests/                  273 tests across 8 suites, none needing an API key
                         run them all: python tests/run_all.py
 eval/rules_eval.py      decision-engine scoring vs baselines, no API key needed
 eval/triage_eval.py     inbox funnel scoring, including the allowlist
@@ -206,7 +206,7 @@ python data/generate_inbox.py   # the AP inbox around those cases
 Everything below this line runs with **no API key**:
 
 ```
-python tests/run_all.py       # 217 tests across 7 suites
+python tests/run_all.py       # 273 tests across 8 suites
 python eval/rules_eval.py     # rule scoring vs baselines
 python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
 python eval/base_rates.py     # daily call volume vs the null baseline
@@ -266,10 +266,10 @@ for the current session.
 
 Known-good settings, all running the same weights:
 
-| provider | `PAYEEPROOF_BASE_URL` | model id | 800 calls |
+| provider | `PAYEEPROOF_BASE_URL` | model id | 900 calls |
 |---|---|---|---|
-| OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-oss-120b` | ~$0.11 |
-| Groq | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` | ~$0.37 |
+| OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-oss-120b` | ~$0.12 |
+| Groq | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` | ~$0.42 |
 | Cerebras | `https://api.cerebras.ai/v1` | `gpt-oss-120b` | ~$0.64 |
 
 Cerebras drops the `openai/` prefix; `MODEL_PREFERENCE` carries both spellings,
@@ -358,10 +358,14 @@ established — caught by the test asserting that no input path releases a payou
 
 Ground truth is assigned from independently authored scenario narratives, **not** derived from detector logic. Feature values are generated *from* each narrative afterwards, never the reverse.
 
-- 120 synthetic vendors, 800 cases, stratified 70/30 — 558 dev, 242 holdout
-- Ten narratives: `fraud_easy`, `fraud_hard`, `fraud_compromised`,
-  `fraud_mule`, `fraud_sim_swap`, `legit_easy`, `legit_hard`,
-  `legit_rebrand`, `legit_add_account`, `legit_unreachable`
+- 120 synthetic vendors, 900 cases, stratified 70/30 — 622 dev, 278 holdout
+- Eighteen narratives: `fraud_easy`, `fraud_hard`, `fraud_compromised`,
+  `fraud_mule`, `fraud_sim_swap`, `fraud_planted_account`,
+  `fraud_first_contact`, `fraud_thread_hijack`,
+  `fraud_exploit_planted_account`, `legit_easy`, `legit_hard`,
+  `legit_rebrand`, `legit_add_account`, `legit_unreachable`,
+  `legit_group_shared_account`, `legit_second_account`,
+  `legit_added_then_paid`, `legit_switch_to_known_account`
 - `fraud_hard` carries `name_match_score` 85–100 — it passes every bank-level check
 - `legit_hard` has a genuinely new account plus genuine urgency — the false-positive canary
 
@@ -389,22 +393,30 @@ one, so quoting it would be meaningless.
 
 What the rules actually buy is measured against that null baseline:
 
-| system | recall | precision | step-up | **false BLOCK** |
+| system | recall | precision | held | **false BLOCK** |
 |---|---|---|---|---|
-| null — hold everything, no rules | 100% | 86.3% | 100% | 0% |
-| block everything | 100% | 43.2% | 0% | 100% |
-| **PayeeProof** | **100%** | **86.0%** | **52.7%** | **0.6%** |
+| null — hold everything, no rules | 100% | 85.4% | 100% | 0.0% |
+| block everything | 100% | 48.9% | 0% | 100% |
+| allow everything | 0% | 0% | 0% | 0.0% |
+| **PayeeProof** | **100%** | **86.4%** | **78.5%** | **0.0%** |
+
+Measured on the dev split, 622 cases. The holdout agrees: 100% / 87.7% / 79.1%
+/ 0.0%.
 
 With both verification channels running, no fraud case in the dev split is
 released — by PayeeProof or by the do-nothing baseline, which also catches
 sim-swap once it can run a penny drop. So recall ties, and the rules' measurable
-contribution is operational: **the same capture at half the verification cycles**,
-while rejecting 0.6% of legitimate traffic.
+contribution is operational: **21.5% of payouts release with no phone call at
+all**, and none of the traffic is rejected outright.
 
-**A rejected legitimate vendor is not the same event as a held one.** A BLOCK
-rejects the payout and deactivates the fund account; a hold costs a phone call.
-Reporting both as one false-positive number hides which one you are causing, so
-they are tracked separately.
+**A rejected legitimate vendor is not the same event as a held one.** A
+rejection stops the payout and deactivates the fund account; a hold costs a
+phone call. Reporting both as one false-positive number hides which one you are
+causing, so they are tracked separately — and since v2 the engine cannot reject
+anything on its own. `false BLOCK` is 0.0% by construction, not by tuning: the
+rules that once rejected now hold and attach a `recommended_action="reject"` for
+a human to confirm. 57 held cases on the holdout carry that recommendation and
+none of them is legitimate.
 
 Reproduce: `python eval/rules_eval.py`, and `--sweep` for the threshold curve.
 
@@ -520,6 +532,32 @@ Matching is now on the concept, and that same case now correctly warns.
 
 ## Known open flaws
 
+**Tier 2 is reachable now, and on this corpus it catches nothing.** Until the
+scenarios described under *The held-out result* were added, `R6_contextual_risk`
+and `R7_all_clear` had fired **zero times in 552 cases** — every case was caught
+by an earlier rule, so the four contextual checks and every inbox signal were
+computed, stored and displayed while being unable to affect an outcome.
+
+They fire now. R6 fires 15 times on dev and **all 15 are legitimate** — urgent
+language on an ordinary account switch. With the trust-store anchor in place,
+tier 2 costs 15 held legitimate cases and catches nothing tier 1 does not already
+catch. It stays because the anchor check returns nothing when the vendor master
+carries no provenance columns, which is the likely case on real merchant data —
+so it is defence in depth whose depth is currently measurable at zero on
+synthetic data with a complete master. **Do not quote tier 2 as catching fraud
+here.** It does not.
+
+**A history-based inbox signal was retired rather than re-tuned.**
+`inbox_repeat_destination_requests` fired on 70.0% of legitimate change requests
+against 36.8% of fraud — it was measuring how long a relationship had existed,
+because a typosquat has no history at all. Three variants were measured and the
+best flipped the direction by eight points, which is noise with a preference. The
+ceiling is the corpus: 552 change requests over 90 days across 301 domains means
+107 domains ask to move the destination twice or more in one quarter, where a
+real supplier does it once in several years. `prior_change_requests` remains an
+MCP tool — the agent may still ask — but nothing turns the answer into a hold.
+
+
 **A compromised callback was unrecoverable from evidence — so a second channel
 was added.** When the attacker controls the vendor's phone as well as the mail,
 the callback confirms the fraud. 17 cases released on the dev set, and no amount
@@ -559,10 +597,16 @@ trade taken deliberately: a hold is recoverable, a release is not.
 **And it raises the floor for everyone, including doing nothing.** The null
 baseline also reaches 100% recall now, because holding every payout and running
 both channels catches sim-swap too. So the rules' measurable contribution reverts
-to what it was before: the same capture at **half the verification cycles** —
-52.7% against 100%.
+to what it was before: the same capture at fewer verification cycles.
 
-**FIXED IN v2 (uncommitted working tree).** The limitation below is the v1
+*The figures in this section are v1's, kept as the record of why the second
+channel was added.* On the v2 corpus the same comparison is **78.5% held against
+the null baseline's 100%** — 21.5% of payouts release with no phone call. The
+margin narrowed because v2 stopped rejecting anything outright, which converts
+former rejections into holds; that is the trade described above, taken
+deliberately.
+
+**FIXED IN v2.** The limitation below is the v1
 behaviour and the reason for the rebuild. `vendor_accounts.csv` now carries each
 account with its own provenance — `added_via`, `verified_by`,
 `settled_payout_count` — `build_account_index()` returns a set of owners rather
@@ -637,38 +681,53 @@ drift — and a hit is a hard failure that stops rendering, not a warning. The
 baseline is then re-run over the finished corpus:
 
 ```
-keyword baseline over the rendered corpus:  0 / 556 = 0.0%
+keyword baseline over the rendered corpus:  0 / 622 = 0.0%
 ```
 
 Meaning has to be inferred from these messages, not pattern-matched. (Its
-intent-only figure of 79.5% is the baseline's degenerate rule showing through —
-it labels anything containing an account number as a change, so it gets all 442
-changes right and all 114 follow-ups wrong.)
+intent-only figure of 81.5% is the baseline's degenerate rule showing through —
+it labels anything containing an account number as a change, so it gets all 507
+changes right and all 115 follow-ups wrong.)
 
-### Measured — 60 stratified cases, 1 run, `openai/gpt-oss-120b`
+### Measured — both splits in full, 1 run, `openai/gpt-oss-120b`
 
-| | |
-|---|---|
-| intent | 100% |
-| scope | 100% |
-| action | 96.6% |
-| account · IFSC · domain · amount | 98.3% · 98.3% · 100% · 100% |
-| urgency (precision / recall) | 94.4% / 100% |
-| channel manipulation | 100% / **70.6%** |
-| extraction failed | 1.7% |
+900 documents, every one of them extracted. Not a sample.
 
-**End to end the extractor costs nothing on this sample:**
+| | dev (622) | holdout (278) |
+|---|---|---|
+| intent | 99.8% | 99.6% |
+| action | 99.7% | 98.9% |
+| scope | 99.8% | 99.6% |
+| all three exact | **99.7%** | **98.9%** |
+| account · IFSC · GSTIN · domain | 95.0% · 95.0% · 97.7% · 97.4% | 95.3% · 95.3% · 97.8% · 96.0% |
+| amount | 100% | 100% |
+| urgency (precision / recall) | 89.6% / 100% | 86.9% / 100% |
+| channel manipulation | 100% / **72.3%** | 100% / **63.6%** |
+| extraction failed | **0.0%** | **0.0%** |
+
+**End to end the extractor costs nothing, on both splits:**
 
 | | recall | precision | false BLOCK | same rule as ideal |
 |---|---|---|---|---|
-| rules-only upper bound | 86.7% | 81.2% | 0.0% | — |
-| **with real extraction** | **86.7%** | **81.2%** | **0.0%** | **98.3%** |
+| dev — rules-only bound | 100% | 86.4% | 0.0% | — |
+| **dev — with real extraction** | **100%** | **86.4%** | **0.0%** | **98.9%** |
+| holdout — rules-only bound | 100% | 87.7% | 0.0% | — |
+| **holdout — with real extraction** | **100%** | **87.7%** | **0.0%** | **98.9%** |
 
 That is not luck, it is the architecture doing what it was built to do. Identity
 never comes from the extracted claims — the destination is read from the payout's
 own fund account — so a misread account number cannot move a decision. And the
 signals the model *does* miss are corroborating ones: channel manipulation at
-70.6% recall can downgrade a BLOCK to a hold, never a hold to a release.
+72.3% recall can downgrade a rejection recommendation to a plain hold, never a
+hold to a release.
+
+**The weakest narrative, named rather than averaged away.** `legit_add_account`
+scores 23/25 on dev and 9/12 on the holdout, and every miss is the same one:
+`ADD_FUND_ACCOUNT` read as `REPLACE_PAYOUT_DESTINATION` or as `NONE`. That
+distinction is what R4's design rests on. It changed no outcome in either split
+only because R5 holds those cases anyway — which is luck, not robustness, and is
+the first thing to fix if this extractor is relied on more heavily. The n is
+small on both sides, so the dev/holdout gap is not a split difference.
 
 **Two findings from building it, both mine rather than the model's.** Scoring
 initially showed 90% on account numbers; every miss was a follow-up where the
@@ -681,35 +740,80 @@ which would defeat lookalike detection entirely, since the edit distance is
 computed on registrable labels. Normalising that took domain recovery from 91.7%
 to 100%.
 
-Caveats that travel with these numbers: 60 of 556 cases, one run, one model. The
-extractor is not reproducible run to run, so a single pass is one sample —
-`--runs N` reports the spread.
+Caveats that travel with these numbers: one run, one model. The extractor is not
+reproducible run to run, so a single pass is one sample — `--runs N` reports the
+spread. Claim recovery sits at 95–97%; it is harmless by construction, because
+claims are never trusted as identity, but it is not the number to quote as
+"extraction accuracy" without saying which column it is.
 
 ---
 
 ## The operator view
 
-`http://localhost:8000/` lists decisions newest first; each one opens onto the
-evidence behind it. The point is not that the system returns a verdict — it is
-that **every verdict is attributable**. A held payout is somebody's money, and
-the person holding it has to be able to say why:
+```
+python src/demo.py --serve      # loads the inbox, then serves the dashboard
+```
+
+`/inbox` is the mailbox as triage saw it; `/` lists decisions newest first; every
+message and every decision opens onto the evidence behind it. The point is not
+that the system returns a verdict — it is that **every verdict is attributable**.
+A held payout is somebody's money, and the person holding it has to be able to
+say why.
+
+**Every message opens, including the ones triage filtered out.** That is a
+control, not a convenience: the failure this layer is most exposed to is
+silently binning a real change request, and the only way anyone can check that
+is by reading what it binned. The mail comes first on the page and the machine's
+reading second, because an operator who reads the verdict first inherits its
+conclusion.
+
+**The screen speaks the operator's language and keeps the auditor's.**
+`R5_tier1_inconclusive` is a variable name; *"Identity checks could not be
+completed"* is the same fact in a form somebody can act on. `src/vocabulary.py`
+holds the translation in one place and the identifier stays beside the sentence
+in small type — an operator cannot act on a symbol, and an auditor cannot accept
+a paraphrase of the rule table.
+
+A held case shows what would release it, and names the account:
 
 ```
-BLOCK   R2c_followup_destination_conflict
+On hold          R5_tier1_inconclusive
+Identity checks could not be completed
 
-Destination account      999988887777
-Destination came from    razorpay_fund_account      <- not the email
-Change request           none on file
-Evidence source          no_document_supplied
-Semantic reading         PAYMENT_FOLLOWUP / NONE / NONE
+  Not evidence of fraud — evidence we could not confirm identity.
+  Verify through a channel the requester does not control.
 
-TIER 1 — identity, against the vendor master
-FAIL  account_continuity  account 999988887777 is already on file for a
-                          different vendor (VEND0123) — cross-contact reuse
-                          source: vendor_master_crosscheck
+VERIFICATION — WHAT WOULD RELEASE THIS
+  Ask the supplier to send Rs 1 from this account, and no other:
+      772180771036
+  chosen because 19 settled payouts, added 2024-03-28 via onboarding
 
-POST  /v1/payouts/pout_fa_mule/reject
-PATCH /v1/fund_accounts/fa_mule        [needs human confirmation]
+ACCOUNTS ON FILE FOR THIS SUPPLIER
+  772180771036   At onboarding 2024-03-28   Verified at onboarding (KYC)   19
+  This payment is going to 133688561858, which is not one of the accounts
+  above. That is what the destination check reports, and why it is held.
+```
+
+**The buttons record what a human did, and refuse what one person should not
+do alone.** They move no money and they are not approve/decline — each records a
+fact established outside the system: a call placed on a number the supplier did
+not choose, a rupee that arrived from the named account. Case state is a fold
+over an append-only log, so a case cannot claim a status its own history does not
+support. Three refusals are enforced **on the server**, in
+`casefile.may_release()`, not by drawing a button greyed out:
+
+- nothing releases without a recorded verification — "could not reach them" is
+  the absence of evidence, and absence holds
+- **whoever recorded the verification may not release the payment**
+- a negative outcome is sticky — confirm-then-deny stays contested
+
+Rejection is deliberately *not* segregated: the two-person rule protects money
+leaving, and refusing to pay releases nothing.
+
+```
+POST /case/pout_bec/action  action=released  actor=Priya Menon
+  -> Refused. You recorded the verification on this case, so you cannot
+     also release it. A different person must.
 ```
 
 **It deliberately shows what the webhook response withholds.** The reply to
@@ -1012,7 +1116,7 @@ to prevent.
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency handling; document correlation; the rules evaluation and the
 ablation; the operator dashboard; the inbox triage funnel and its MCP tool
-layer; 217 tests.
+layer; the case file and its server-side two-person rule; 273 tests.
 
 **Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
 vendor lookups that would be API reads. FAV results are replayed

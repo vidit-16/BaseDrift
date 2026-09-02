@@ -177,13 +177,31 @@ audit trail is simultaneously a compliance *requirement* and a personal-data
 *liability*. Those two pull in opposite directions and the retention period has
 to be a stated decision, not a default.
 
-**3. Access control.** *(worse — a second unauthenticated endpoint)*
+**3. Access control.** *(worse again — a third unauthenticated endpoint, and
+this one decides)*
 `POST /documents` accepts a document for any vendor from anyone who can reach it.
-`POST /messages` now accepts a raw message the same way, and is the more
-attractive target of the two: a message posted there is triaged, becomes a
+`POST /messages` accepts a raw message the same way: it is triaged, becomes a
 document, and carries inbox signals into a real payout decision. The dashboard
 shows account numbers and vendor identity to anyone who can load it. The
-webhook's HMAC authenticates Razorpay — it does nothing for any of these three.
+webhook's HMAC authenticates Razorpay — it does nothing for any of these.
+
+`POST /case/{payout_id}/action` is the most sensitive of the four and was added
+last. It records verification outcomes and resolves cases, and in a deployment
+that executed its action plans it would be the endpoint that releases money.
+
+**Its authorisation rules are real; its authentication does not exist.**
+`casefile.may_release()` is enforced server-side and cannot be skipped with
+curl — nothing releases without a recorded verification, and whoever recorded
+the verification cannot release. But the *identity* those rules apply to is a
+`pp_actor` cookie the caller chooses. The two-person rule therefore stops one
+person acting twice **by accident or by convention**, and stops nothing at all
+against someone who edits a cookie.
+
+That is a demonstration of the control, not the control. Production needs
+authenticated operators with distinct identities before this endpoint is exposed
+to anything, and the segregation logic is written so that swapping the identity
+source is the only change required: `_actor(request)` is the single place the
+caller's identity is decided.
 
 Related and not yet built: `INBOX_CURSOR.md` records why message dedupe must key
 on the provider-assigned id rather than the `Message-ID:` header. The header is

@@ -100,7 +100,13 @@ def test_every_verify_call_site_in_the_repo_uses_the_current_signature():
 
     checked = 0
     for path in sorted(root.rglob("*.py")):
-        if ".git" in path.parts or "scratchpad" in path.parts:
+        # Relative to the repo root, never the absolute path. Checking absolute
+        # components meant the exclusion fired on any ANCESTOR directory that
+        # happened to be called scratchpad — a checkout under one skipped every
+        # file in the repo and the test passed by finding nothing, which this
+        # assert then caught only because it counts what it checked.
+        parts = path.relative_to(root).parts
+        if ".git" in parts or "scratchpad" in parts:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         if "verifier.verify(" not in text:
