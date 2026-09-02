@@ -171,11 +171,11 @@ COMPLIANCE.md           what production would have to satisfy, and why
                         anonymisation is not available to this design
 NOTES.md                the working log: every v2 item, what it measured, and
                         what it does not show
-tests/                  280 tests across 8 suites, none needing an API key
+tests/                  284 tests across 8 suites, none needing an API key
                         run them all: python tests/run_all.py
 tools/snapshot.py       freezes the dashboard into docs/ as static HTML,
                         so it can be shared without exposing POST routes
-docs/                   that snapshot, 135 pages, no server required
+docs/                   that snapshot, 205 pages, no server required
 eval/rules_eval.py      decision-engine scoring vs baselines, no API key needed
 eval/triage_eval.py     inbox funnel scoring, including the allowlist
                         counterfactual. No API key needed
@@ -209,7 +209,7 @@ python data/generate_inbox.py   # the AP inbox around those cases
 Everything below this line runs with **no API key**:
 
 ```
-python tests/run_all.py       # 280 tests across 8 suites
+python tests/run_all.py       # 284 tests across 8 suites
 python eval/rules_eval.py     # rule scoring vs baselines
 python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
 python eval/base_rates.py     # daily call volume vs the null baseline
@@ -758,7 +758,7 @@ python src/demo.py --serve      # loads the inbox, then serves the dashboard
 python tools/snapshot.py        # freeze it into docs/ as static HTML
 ```
 
-**There is a frozen copy in `docs/`**, 135 pages of it, browsable without
+**There is a frozen copy in `docs/`**, 205 pages of it, browsable without
 running anything. That is deliberately a snapshot rather than a deployment: this
 app has three POST routes with no authentication in front of them, and exposing
 them through a tunnel means anyone who finds the URL can file a change request
@@ -1129,7 +1129,7 @@ to prevent.
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency handling; document correlation; the rules evaluation and the
 ablation; the operator dashboard; the inbox triage funnel and its MCP tool
-layer; the case file and its server-side two-person rule; 280 tests.
+layer; the case file and its server-side two-person rule; 284 tests.
 
 **Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
 vendor lookups that would be API reads. FAV results are replayed

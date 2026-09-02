@@ -149,9 +149,9 @@ Groq free tier. No credit card. console.groq.com
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
 data generator + generated dev/holdout splits.
 
-280 tests across 8 suites, none needing an API key: `python tests/run_all.py`
+284 tests across 8 suites, none needing an API key: `python tests/run_all.py`
 (decision_engine 45, eval_harness 9, extractor 42, render 17,
-verifier+pipeline 44, webhook 62, triage_inbox 38, casefile 23).
+verifier+pipeline 44, webhook 66, triage_inbox 38, casefile 23).
 
 An early version of this file claimed 38 unit tests when zero existed. The
 claim was removed at the time rather than quietly left in place; the suites
@@ -1686,6 +1686,60 @@ V2.J  FIVE RED CI RUNS, AND A LOCAL SIMULATION THAT SAID GREEN
       Worth noting what did NOT fail: the tests themselves were correct and were
       correctly red. The test suite caught the defect immediately and reported
       it clearly on every push. Nobody looked.
+
+
+V2.K  THE DEMO WAS TWO WORLDS THAT BARELY TOUCHED
+
+      Reported by the first person to use the dashboard without having built
+      it, which is the only way this kind of defect gets found:
+
+        "there are three tabs in the decision window for a single vendor 0079,
+         and out of all the 70 reviews, i can only see a decision arrow on one
+         ... it's very confusing"
+
+      Exactly right, and the confusion was the product rather than the reader.
+      `demo.py --serve` loaded 221 real messages from the corpus and then fired
+      THREE hand-built payouts, all against one demo vendor. One message
+      happened to correlate. The other 69 routed messages said "Awaiting
+      payment", which is true and useless.
+
+      THE MODEL WAS NOT WRONG. PayeeProof decides when money moves, not when
+      mail arrives, so a change request with no payout against it genuinely has
+      nothing to decide. That is the architecture and it stays. What was wrong
+      was demonstrating it with a mailbox and a payout queue that had almost
+      nothing to do with each other.
+
+      _replay_queue() now raises the payouts an AP team would actually have
+      raised from that mail: a change request pays where it asked to be paid —
+      which is exactly what a clerk acting on the email creates, and exactly
+      what this system exists to judge — and routine mail pays where the vendor
+      is always paid.
+
+        before: 3 decisions, 1 vendor, 1 message openable
+        after:  73 decisions, 52 vendors, all 70 routed messages openable
+                60 released, 13 held, 3 carrying a rejection recommendation
+
+      THREE THINGS THAT HAD TO BE TRUE, each with a test:
+
+        - the destination comes from what the message PROPOSED, never from the
+          label. A test greps _replay_queue for "label" and fails if it appears;
+          staging the outcome would make every decision on screen worthless.
+        - no API call. Seventy payouts would be seventy live extractions on
+          every start — slow, billable, and `--serve` would need a key. The
+          reading is supplied, and a test rigs extractor.extract to raise.
+        - spread. Ten or more vendors, three or more rules, and at least one
+          release AND one hold, because three payouts against one vendor all
+          hitting the same rule is one case shown three times.
+
+      The seam that made it possible: handle_payout_pending() now takes
+      extract_fn, injected exactly as fav_lookup already was and for the same
+      reason — anything replaying a queue needs to supply the reading rather
+      than buy it. Default is the live model, so the real webhook path is
+      unchanged.
+
+      Also fixed while there: the index called recent_audits() with its default
+      page size of 50, which silently truncated a 73-row queue so the count on
+      screen disagreed with the inbox beside it.
 
 
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES

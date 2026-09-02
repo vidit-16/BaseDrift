@@ -529,7 +529,8 @@ def handle_payout_pending(raw_body: bytes,
                           store: Store,
                           secret: Optional[str] = None,
                           fav_lookup=None,
-                          event_id_header: Optional[str] = None) -> HandlerResult:
+                          event_id_header: Optional[str] = None,
+                          extract_fn=None) -> HandlerResult:
     """
     Full path from raw request to decision. Never raises.
 
@@ -606,7 +607,12 @@ def handle_payout_pending(raw_body: bytes,
         doc_id = None
         inbox_signals = []
     else:
-        ext = extractor_mod.extract(doc["text"])
+        # Injected the same way fav_lookup is, and for the same reason: the
+        # real extractor costs an API call per payout, so anything replaying a
+        # queue — the demo, an evaluator, a test — needs to supply the reading
+        # rather than buy it. Default is the live model, so nothing changes for
+        # the actual webhook path.
+        ext = (extract_fn or extractor_mod.extract)(doc["text"])
         doc_id = doc["document_id"]
         # Gathered at arrival and carried here. See Store.put_document.
         inbox_signals = doc.get("inbox_signals") or []
@@ -775,7 +781,12 @@ def create_app(store: Optional[Store] = None, fav_lookup=None):
 
     @app.get("/", response_class=HTMLResponse)
     async def decisions():
-        return dashboard.render_index(app.state.store.recent_audits())
+        # The whole queue, not the first 50. recent_audits() defaults to a
+        # page size that made sense when a demo produced three decisions; with
+        # a replayed morning's mail it silently truncated the list, so the
+        # decision count on screen disagreed with the inbox beside it.
+        return dashboard.render_index(
+            app.state.store.recent_audits(limit=len(app.state.store.audits)))
 
     def _decorate(t):
         """A triage row plus the payout decision it produced, if one arrived."""

@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.join(ROOT, "eval"))
 
 import llm_client  # noqa: E402
 import pipeline  # noqa: E402
+import extractor as E  # noqa: E402
 import triage as T  # noqa: E402
 import verifier  # noqa: E402
 import webhook as W  # noqa: E402
@@ -200,6 +201,131 @@ def fire(store, fund_account_id, payout_id, amount, doc_id=None, fav=None):
                                    event_id_header=f"evt_{payout_id}")
 
 
+def _replay_queue(store, rows):
+    """
+    Give every routed message the payout decision it is waiting for.
+
+    WHY THIS EXISTS
+    ===============
+    The dashboard used to show 221 messages, 70 of them routed for review, and
+    exactly THREE payout decisions — all against one demo vendor, only one of
+    which corresponded to a message anyone could open. Two worlds that barely
+    touched: a real mailbox from the corpus, and three hand-built payouts.
+
+    The model was right and the demo was wrong. PayeeProof decides when money
+    moves, not when mail arrives, so a change request that no payout has been
+    attempted against genuinely has nothing to decide. But a queue where 69 of
+    70 rows say "awaiting payment" teaches the viewer nothing, and the first
+    question anyone asks is why they cannot open the others.
+
+    So the payouts an accounts-payable team would actually have raised are
+    raised here: for a change request, to the account the request asked for —
+    which is exactly what a clerk acting on that email creates, and exactly the
+    thing this system exists to judge. For routine mail, to the account the
+    vendor already settles to.
+
+    WHAT IS SIMULATED, STATED PLAINLY
+    =================================
+    The DESTINATION comes from what the message proposed. That is a fact about
+    the message, not a label about the case — nothing here reads `label`, and
+    the engine is never told which cases are fraudulent.
+
+    FAV is replayed from the case row, schema-faithfully, exactly as
+    eval/rules_eval.py does. The bank's answer is part of the world, not part
+    of the policy.
+
+    EXTRACTION is the perfect reading the rules eval uses, not a live model
+    call. Seventy payouts would otherwise be seventy API calls every time the
+    demo starts. The README reports what the real extractor costs against this
+    same bound — nothing, on both splits — so the decisions shown here are the
+    ones the live extractor produces, minus the wait.
+    """
+    import rules_eval as RE
+
+    cases = {}
+    with open(os.path.join(DATA, "cases_dev.csv"), newline="",
+              encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            cases[r["case_id"]] = r
+
+    by_message = {r["message_id"]: r for r in rows}
+
+    # The reading a flawless extractor would produce, keyed by the text the
+    # handler will hand us. Anything not in here is routine mail: it names an
+    # account without asking for anything to change, which is precisely what a
+    # PAYMENT_FOLLOWUP is.
+    readings = {}
+
+    def extract_fn(text):
+        return readings.get(text) or E.ExtractionResult(
+            ok=True, intent=E.INTENT_FOLLOWUP, action=E.ACTION_NONE,
+            scope=E.SCOPE_NONE, evidence_source="replayed_perfect_extraction")
+
+    fired = 0
+    for entry in list(store.triage_log):
+        if entry.get("verdict") != "ROUTE" or not entry.get("document_id"):
+            continue
+        vendor = store.vendors.get(entry.get("vendor_id"))
+        if vendor is None:
+            continue
+
+        row = by_message.get(entry["message_id"], {})
+        case = cases.get(row.get("case_id") or "")
+
+        if case:
+            dest, ifsc = case["proposed_account_number"], case["proposed_ifsc"]
+            amount = float(case["amount"])
+            available = case["fav_name_available"] == "True"
+            fav = W.FAVResult(
+                case["fav_account_status"],
+                case["registered_name_returned"] if available else None,
+                int(case["name_match_score"]) if available else None)
+            readings[entry.get("body") or ""] = RE.features_to_extraction(
+                case, vendor)
+        else:
+            # Routine mail. The payout goes where this vendor is always paid,
+            # and the bank confirms what the master already says.
+            dest, ifsc = vendor.known_account_number, vendor.known_ifsc
+            amount = vendor.avg_payout_amount or 25000.0
+            fav = W.FAVResult("active", vendor.legal_name, 100)
+
+        fa_id = f"fa_{fired:04d}"
+        store.fund_accounts[fa_id] = W.FundAccount(
+            fa_id, dest, ifsc, f"cont_{vendor.vendor_id}", vendor.vendor_id)
+        # Always name the document, including for routine mail. The reading
+        # returned for it is PAYMENT_FOLLOWUP / NONE — "this message asks for
+        # nothing to change" — which is what sends it down R2 to be judged on
+        # the real destination. Withholding the id left 53 of 69 messages
+        # unable to reach their own decision, which is the confusion this
+        # whole function exists to remove.
+        _fire_replay(store, fa_id, f"pout_{fired:04d}", amount,
+                     doc_id=entry["document_id"], fav=fav,
+                     extract_fn=extract_fn)
+        fired += 1
+    return fired
+
+
+def _fire_replay(store, fund_account_id, payout_id, amount, doc_id, fav,
+                 extract_fn):
+    """fire(), with the extractor supplied instead of bought."""
+    notes = {"payeeproof_document_id": doc_id} if doc_id else {}
+    body = {
+        "id": f"evt_{payout_id}", "entity": "event", "event": "payout.pending",
+        "contains": ["payout"], "created_at": int(time.time()),
+        "payload": {"payout": {"entity": {
+            "id": payout_id, "entity": "payout",
+            "fund_account_id": fund_account_id,
+            "amount": int(round(amount * 100)), "currency": "INR",
+            "status": "pending", "notes": notes}}},
+    }
+    raw = json.dumps(body).encode()
+    sig = hmac.new(SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    return W.handle_payout_pending(raw, sig, store, secret=SECRET,
+                                   fav_lookup=lambda fa: fav,
+                                   event_id_header=f"evt_{payout_id}",
+                                   extract_fn=extract_fn)
+
+
 def serve(store):
     """
     Hand THIS store to the dashboard.
@@ -231,13 +357,21 @@ def serve(store):
             headers=_json.loads(r["headers"] or "{}"),
             in_reply_to=r["in_reply_to"]))
 
+    fired = _replay_queue(store, rows[:220])
+
     print()
     rule("─")
     print(f"  Inbox loaded: {len(store.triage_log)} messages triaged.")
+    print(f"  {fired} payouts raised against them, and decided.")
     print("  The operator dashboard:")
     print("    http://localhost:8000/inbox       the mailbox, routed and dropped")
     print("    http://localhost:8000/            the decision queue")
     print("    http://localhost:8000/case/pout_bec    the evidence table")
+    print()
+    print("  Every routed message now opens onto its own decision. The queue is")
+    print("  the payouts an AP team would have raised from that mail: a change")
+    print("  request pays where it asked to be paid, routine mail pays where it")
+    print("  always has.")
     print()
     print("  Ctrl-C to stop.")
     rule("─")

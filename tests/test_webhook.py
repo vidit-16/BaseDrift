@@ -1090,6 +1090,114 @@ def test_audit_history_is_bounded():
 
 # ══ Runner ════════════════════════════════════════════════════════════
 
+# ══ The replayed demo queue ═══════════════════════════════════════════
+
+def _demo_store():
+    """The store src/demo.py --serve builds, without starting a server."""
+    import csv as _csv
+    import json as _json
+    import demo
+    import triage as _T
+    os.environ.setdefault("RAZORPAY_WEBHOOK_SECRET", "whsec_demo")
+    vendors = demo.pipeline.load_vendors(
+        os.path.join(demo.DATA, "vendor_master.csv"),
+        os.path.join(demo.DATA, "vendor_accounts.csv"))
+    case, _msg = demo.load_case()
+    store = demo.build_store(vendors, case)
+    store.vendors = vendors
+    with open(os.path.join(demo.DATA, "inbox_dev.csv"), newline="",
+              encoding="utf-8") as f:
+        rows = list(_csv.DictReader(f))
+    rows.sort(key=lambda r: float(r["received_at"]), reverse=True)
+    rows = rows[:220]
+    for r in rows:
+        store.ingest_message(_T.Message(
+            message_id=r["message_id"], from_addr=r["from_addr"],
+            subject=r["subject"], body=r["body"], thread_id=r["thread_id"],
+            received_at=float(r["received_at"]),
+            headers=_json.loads(r["headers"] or "{}"),
+            in_reply_to=r["in_reply_to"]))
+    return store, rows
+
+
+def test_the_replayed_queue_gives_every_routed_message_a_decision():
+    """
+    The demo used to show 70 routed messages and three payout decisions, only
+    one of which any message could reach. The model was right — PayeeProof
+    decides when money moves, not when mail arrives — but a queue where 69 of
+    70 rows say "awaiting payment" teaches nobody anything, and the first
+    question a viewer asks is why the others cannot be opened.
+
+    Every routed message must reach its own decision.
+    """
+    import demo
+    store, rows = _demo_store()
+    fired = demo._replay_queue(store, rows)
+
+    routed = [t for t in store.triage_log if t.get("verdict") == "ROUTE"]
+    assert fired == len(routed), f"{fired} payouts for {len(routed)} routed"
+
+    for t in routed:
+        assert store.audit_for_document(t["document_id"]), (
+            f"{t['message_id']} has no decision to open")
+
+
+def test_the_replay_makes_no_api_call():
+    """
+    Seventy payouts would be seventy live extractions every time the demo
+    starts — slow, billable, and it would make `--serve` fail without a key.
+    The reading is supplied instead of bought, so this must hold even with the
+    extractor rigged to explode.
+    """
+    import demo
+    import extractor as E
+
+    real = E.extract
+
+    def explode(_text):
+        raise AssertionError("the replay called the live extractor")
+
+    E.extract = explode
+    try:
+        store, rows = _demo_store()
+        assert demo._replay_queue(store, rows) > 0
+    finally:
+        E.extract = real
+
+
+def test_the_replay_spreads_across_vendors_and_rules():
+    """
+    Three payouts against one vendor, all reaching the same rule, is not a
+    queue — it is one case shown three times. A reviewer has to be able to see
+    the engine releasing as well as holding, and doing both for stated reasons.
+    """
+    import demo
+    store, rows = _demo_store()
+    demo._replay_queue(store, rows)
+
+    vendors = {a.get("vendor_id") for a in store.audits}
+    rules = {(a.get("decision") or {}).get("rule_fired") for a in store.audits}
+    outcomes = {a.get("final_outcome") for a in store.audits}
+
+    assert len(vendors) >= 10, f"only {len(vendors)} vendors in the queue"
+    assert len(rules) >= 3, f"only {len(rules)} distinct rules fired"
+    assert {"ALLOW"} & outcomes and outcomes - {"ALLOW"}, (
+        f"the queue only ever does one thing: {outcomes}")
+
+
+def test_the_replay_never_reads_the_fraud_label():
+    """
+    The destination comes from what the message PROPOSED, which is a fact about
+    the message. If the replay ever consulted `label` it would be staging the
+    outcome, and every decision on the screen would be worthless.
+    """
+    import inspect
+    import demo
+    src = inspect.getsource(demo._replay_queue)
+    assert '"label"' not in src and "'label'" not in src, (
+        "the replay reads the ground-truth label")
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]
