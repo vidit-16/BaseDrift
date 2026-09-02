@@ -18,6 +18,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+
 import extractor as E  # noqa: E402
 import llm_client  # noqa: E402
 
@@ -606,6 +608,51 @@ def test_no_provider_pin_sends_no_provider_field():
     finally:
         requests.post = real
     assert "provider" not in captured
+
+
+def test_the_prompt_does_not_quote_the_corpus_it_is_scored_on():
+    """
+    The prompt must teach the RULE, never the test data's wording.
+
+    This caught a real error the day it was written. Guidance added to fix an
+    ADD-vs-REPLACE misread was phrased as "Only work billed from next quarter
+    comes to the new facility" — near-verbatim from data/render.py's own
+    template, "Only work billed from next quarter onward comes to the facility
+    above." It scored 100%, and the score would have been measuring
+    memorisation of the corpus rather than the distinction.
+
+    That is precisely the failure already recorded in this repository once:
+    ablation corpus v1 scored the keyword baseline at 92.3% because the
+    paraphrases were written first and the trigger lists afterwards to match
+    them. The same mistake, one layer along.
+
+    Rewriting the guidance abstractly reproduced the same 100%, which is what
+    makes the result trustworthy — so this test protects a measurement, not a
+    style preference.
+    """
+    import re
+    import sys
+
+    sys.path.insert(0, os.path.join(HERE, "..", "data"))
+    import render as R
+
+    src = open(os.path.join(HERE, "..", "data", "render.py"),
+               encoding="utf-8").read()
+    prompt = E.SYSTEM_PROMPT.lower()
+
+    # Every long string literal in the renderer is corpus phrasing.
+    overlaps = set()
+    for phrase in re.findall(r'"([^"]{25,})"', src):
+        words = re.findall(r"[a-z]{4,}", phrase.lower())
+        for i in range(len(words) - 3):
+            gram = " ".join(words[i:i + 4])
+            if gram in prompt:
+                overlaps.add(gram)
+
+    assert not overlaps, (
+        "the prompt borrows the corpus's own wording, so any score on that "
+        f"corpus measures memorisation: {sorted(overlaps)}")
+    assert R.BANNED_VOCABULARY, "the renderer's trigger list vanished"
 
 
 def main():

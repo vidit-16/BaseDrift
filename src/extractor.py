@@ -189,6 +189,26 @@ scope:
 - FUTURE_ONLY = only invoices raised going forward.
 - NONE = no change requested.
 
+DECIDING action — apply this test, in this order:
+1. Does the message introduce an account other than the one currently on file?
+   If no: action NONE, intent PAYMENT_FOLLOWUP. Stop here.
+2. After the change described, will ANY payment from this sender still reach the
+   OLD account? If yes: ADD_FUND_ACCOUNT. If no: REPLACE_PAYOUT_DESTINATION.
+
+action and scope answer different questions. action is about whether the old
+account keeps a role. scope is about which invoices the new account receives.
+Limiting the new account to later invoices sets the SCOPE; on its own it does
+not make the action REPLACE, and it often indicates ADD, because invoices
+already raised then remain with the old account.
+
+Two errors to avoid:
+- Answering REPLACE when any part of the sender's business is still said to
+  settle on the existing account. If the old account keeps a role, however
+  small, the action is ADD_FUND_ACCOUNT.
+- Answering NONE because the message confirms that one particular invoice is
+  unaffected, when the same message also introduces a new account for other or
+  later work. A change is still being requested; only its scope is narrow.
+
 CRITICAL: judge intent by meaning, not keywords. A message may contain account numbers, IFSC codes, and words like "changed", "moved", "updated" while requesting NO change to this sender's destination — for example describing a third party's bank change, an internal process change, or a change that already happened previously.
 
 EXTRACTION RULES
