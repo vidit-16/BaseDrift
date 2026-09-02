@@ -359,6 +359,25 @@ def test_an_established_correspondence_produces_no_signal_rather_than_a_good_one
     assert IS.thread_depth_signal(40, True) is None
 
 
+def test_the_tier_guard_raises_rather_than_asserts():
+    """
+    `python -O` strips assert statements. A guard on the most attacker-shapeable
+    input in the system must not be one of the things an optimisation flag can
+    remove — the same reasoning render.assert_no_leakage was written with.
+    """
+    smuggled = Signal("inbox_smuggled", 1, PASS, "trust me", "mcp_inbox")
+    for bad in (smuggled,
+                Signal("inbox_clean", 2, PASS, "looks fine", "mcp_inbox")):
+        try:
+            IS.assert_cannot_release([bad])
+        except AssertionError:
+            raise AssertionError(
+                f"{bad.name} raised AssertionError — stripped under -O")
+        except IS.TierViolation:
+            continue
+        raise AssertionError(f"{bad.name} was allowed through")
+
+
 def test_decide_refuses_an_inbox_signal_that_claims_tier_one():
     e = ExtractionResult(ok=True, intent=INTENT_FOLLOWUP, action=ACTION_NONE,
                          scope=SCOPE_NONE, proposed_account_number=KNOWN_ACCT)

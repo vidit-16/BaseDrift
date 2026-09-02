@@ -167,17 +167,32 @@ def collect(server, message, triage_result, is_reply: bool = False) -> List[Sign
     return [s for s in signals if s is not None]
 
 
+class TierViolation(Exception):
+    """Inbox evidence tried to claim Tier 1, or tried to clear something."""
+
+
 def assert_cannot_release(signals: List[Signal]) -> None:
     """
-    Structural guard. Called by the tests and cheap enough to call in anger.
+    Structural guard. Called by the tests and by investigator.py in anger.
 
     A PASS here would let inbox evidence satisfy a rule that requires a clean
     signal — and inbox evidence is the most attacker-shapeable input the system
-    has. This is the assertion that keeps "can hold, never release" true rather
-    than merely intended.
+    has. This is what keeps "can hold, never release" true rather than merely
+    intended.
+
+    RAISES, never asserts. It used to use bare `assert`, which python -O strips
+    out entirely — so the guard on the most attacker-shapeable input in the
+    system would have vanished under an optimisation flag, silently. The same
+    reasoning is already written down for render.assert_no_leakage: a check that
+    can be turned off is not a check. decide() carries an independent version of
+    this rule, and that one already raised; this makes the pair consistent.
     """
     for s in signals:
-        assert s.tier == 2, f"{s.name} is Tier {s.tier}; inbox evidence is Tier 2"
-        assert s.result in (WARN, INCONCLUSIVE), (
-            f"{s.name} returned {s.result}. Inbox evidence must never be able to "
-            f"clear anything: a mailbox owner can author their own history.")
+        if s.tier != 2:
+            raise TierViolation(
+                f"{s.name} is Tier {s.tier}; inbox evidence is Tier 2")
+        if s.result not in (WARN, INCONCLUSIVE):
+            raise TierViolation(
+                f"{s.name} returned {s.result}. Inbox evidence must never be "
+                f"able to clear anything: a mailbox owner can author their own "
+                f"history.")
