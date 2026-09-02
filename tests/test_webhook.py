@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sys
 import time
 
@@ -1011,6 +1012,53 @@ def test_dashboard_escapes_vendor_controlled_text():
     body = client.get("/").text
     assert "<script>alert(1)</script>" not in body
     assert "&lt;script&gt;" in body
+
+
+def test_every_dashboard_view_escapes_hostile_text():
+    """
+    The original test covered the index only, and the dashboard has grown three
+    more views since — the message reader renders an attacker's EMAIL BODY
+    verbatim, which is the most directly hostile string in the system.
+
+    Checks tag formation and attribute escape, not the presence of the word
+    "onerror": escaped text containing it is inert, so asserting on the word
+    would fail on safe output while passing on unsafe output that happened to
+    use a different attribute.
+    """
+    import dashboard
+    EVIL = "'\"><script>alert(1)</script><img src=x onerror=alert(2)>"
+    row = {"message_id": EVIL, "from": EVIL, "subject": EVIL, "body": EVIL,
+           "verdict": "ROUTE", "match": "content", "vendor_id": EVIL,
+           "reason": EVIL, "matched_domain": EVIL, "document_id": EVIL,
+           "received_at": 1.0,
+           "inbox_findings": [{"name": EVIL, "result": "WARN",
+                               "detail": EVIL, "source": EVIL}]}
+    audit = {"payout_id": EVIL, "final_outcome": "STEP_UP_VERIFY",
+             "decision": {"rule_fired": EVIL, "reason": EVIL,
+                          "tier1": [{"name": EVIL, "result": "WARN",
+                                     "detail": EVIL, "source": EVIL}]},
+             "destination": {"account_number": EVIL, "source": EVIL},
+             "vendor_id": EVIL, "document": {}, "extraction": {},
+             "accounts_on_file": [{"account_number": EVIL, "ifsc": EVIL,
+                                   "status": EVIL, "is_primary": True,
+                                   "is_destination": True, "added_on": EVIL,
+                                   "added_via": EVIL, "verified_by": EVIL,
+                                   "settled_payout_count": 0,
+                                   "established": False}],
+             "razorpay_actions": [{"method": EVIL, "endpoint": EVIL,
+                                   "effect": EVIL}]}
+    views = {
+        "index": dashboard.render_index([audit]),
+        "inbox": dashboard.render_inbox([row]),
+        "message": dashboard.render_message(row),
+        "case": dashboard.render_case(audit, case=[], actor=EVIL, error=EVIL),
+    }
+    injected = re.compile(r"<\s*(script|img|svg|iframe|object)\b", re.I)
+    for name, page in views.items():
+        assert EVIL not in page, f"{name} rendered the payload verbatim"
+        found = injected.findall(page)
+        assert not found, f"{name} let the payload form {found}"
+        assert "&lt;script&gt;" in page, f"{name} did not escape at all"
 
 
 def test_recording_a_decision_did_not_loosen_the_response():
