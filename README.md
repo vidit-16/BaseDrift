@@ -173,6 +173,9 @@ NOTES.md                the working log: every v2 item, what it measured, and
                         what it does not show
 tests/                  280 tests across 8 suites, none needing an API key
                         run them all: python tests/run_all.py
+tools/snapshot.py       freezes the dashboard into docs/ as static HTML,
+                        so it can be shared without exposing POST routes
+docs/                   that snapshot, 135 pages, no server required
 eval/rules_eval.py      decision-engine scoring vs baselines, no API key needed
 eval/triage_eval.py     inbox funnel scoring, including the allowlist
                         counterfactual. No API key needed
@@ -752,7 +755,17 @@ claims are never trusted as identity, but it is not the number to quote as
 
 ```
 python src/demo.py --serve      # loads the inbox, then serves the dashboard
+python tools/snapshot.py        # freeze it into docs/ as static HTML
 ```
+
+**There is a frozen copy in `docs/`**, 135 pages of it, browsable without
+running anything. That is deliberately a snapshot rather than a deployment: this
+app has three POST routes with no authentication in front of them, and exposing
+them through a tunnel means anyone who finds the URL can file a change request
+or resolve a case while somebody is presenting. The snapshot has no POST routes
+at all — the buttons are still drawn, because they are half the story, and they
+are inert. Recording a verification and being refused the release is a state
+change, so that part runs on the live app.
 
 `/inbox` is the mailbox as triage saw it; `/` lists decisions newest first; every
 message and every decision opens onto the evidence behind it. The point is not
