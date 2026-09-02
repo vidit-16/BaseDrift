@@ -107,6 +107,13 @@ Groq free tier. No credit card. console.groq.com
 - "Couldn't evaluate" is not "caught". An R1 hold is correct policy but is
   never scored as a detection — run_case() sets correct=None, scored=False.
 - The holdout is scored once, at the end, and reported with its size.
+- A clean clone is not a clean environment. Verifying CI locally means a FRESH
+  VENV and `pip install -r requirements.txt`, not the interpreter you have been
+  working in — an undeclared dependency is invisible from a machine that already
+  has it. python-multipart went undeclared for five pushes and every CI run was
+  red while a clone-only simulation was green. See V2.J.
+- READ THE ACTUAL CI RUN. `gh run list` takes one command. A local simulation
+  answers a different question than "did the build pass".
 - A compound guard needs a test per clause. `if a or b: raise` with one test
   that trips both proves the guard exists and nothing about what it is made of —
   either clause can then be deleted with the suite still green. Found twice in
@@ -1644,6 +1651,41 @@ V2.I  MUTATION TESTING, AND A COMPOUND-GUARD BLIND SPOT IT FOUND TWICE
       Also from this pass: assert_cannot_release used bare `assert`, which
       python -O strips. It raises TierViolation now, and the suite is run under
       -O as well.
+
+
+V2.J  FIVE RED CI RUNS, AND A LOCAL SIMULATION THAT SAID GREEN
+
+      POST /case/{id}/action parses an ordinary urlencoded HTML form. Starlette's
+      request.form() needs python-multipart for that — for ANY form body, not
+      just multipart, which the package name actively misleads about. It was
+      never added to requirements.txt.
+
+      Twelve tests failed on every CI run from the moment the endpoint landed:
+
+        The `python-multipart` library must be installed to use form parsing.
+
+      IT PASSED LOCALLY THE WHOLE TIME, because this machine already had
+      python-multipart 0.0.9 pulled in by something else. And it passed the
+      "clean clone" check built to catch exactly this, because that check cloned
+      the CODE into a fresh directory and then ran it with the SAME interpreter
+      and the same site-packages. A clean clone is not a clean environment. The
+      simulation could not have caught this and was never going to.
+
+      Two process fixes, both cheap:
+
+        1  Verify with a real venv. `python -m venv`, `pip install -r
+           requirements.txt`, run the suite with THAT interpreter. Done now, and
+           all twelve CI steps pass under it — which is the first time that
+           claim has actually been tested rather than assumed.
+
+        2  Read the actual run. `gh run list` is one command and would have
+           shown five consecutive failures. A local reproduction answers "does
+           it work here", which is a different question from "did the build
+           pass", and only the second one is what CI is for.
+
+      Worth noting what did NOT fail: the tests themselves were correct and were
+      correctly red. The test suite caught the defect immediately and reported
+      it clearly on every push. Nobody looked.
 
 
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES
