@@ -1485,11 +1485,14 @@ V2.G  R6 IS REACHABLE NOW, AND GETTING THERE FOUND A HOLE IN THE TRUST STORE
           unverified — same principle as _unanchored() returning None.
 
       DONE, in V2.H: the holdout was re-scored on 2026-09-02, 278 cases, and
-      every exploited plant held on data the rule never saw.
+      every exploited plant held on data the rule never saw. Dev's 70 appended
+      cases were extracted the same day, so all 900 are cached and no evaluator
+      has uncached work left.
 
-      The extraction cache covered the original 800 only. The holdout's 30 new
-      cases were extracted for V2.H; dev's 70 have still never been extracted,
-      so eval/extraction_eval.py --split dev will make 70 real API calls.
+      The extraction cache now covers all 900 cases — 800 from the original
+      corpus, 30 holdout and 70 dev extracted on 2026-09-02 for a total of 100
+      new calls. The append strategy in (b) is what kept that at 100 instead of
+      900.
 
 
 V2.H  THE HOLDOUT, RE-SCORED AFTER THE TRUST-STORE FIX  (278 cases, 2026-09-02)
@@ -1525,6 +1528,21 @@ V2.H  THE HOLDOUT, RE-SCORED AFTER THE TRUST-STORE FIX  (278 cases, 2026-09-02)
 
         Every exploited plant held. Fourteen of fifteen legitimate switches
         released with no phone call. The rule generalises off dev.
+
+      DEV, FULLY EXTRACTED THE SAME DAY (622 cases, 70 new calls, 552 cached).
+      Recorded here beside the holdout because the two together are the claim:
+
+          split      recall     prec   falseBLK   same rule   failures
+          dev 622    100.0%    86.4%       0.0%       98.9%          0
+          hold 278   100.0%    87.7%       0.0%       98.9%          0
+
+        dev semantics: intent 99.8%, action 99.7%, scope 99.8%, all three
+        99.7%. Leakage 0.0% baseline exact over all 622. Both new scenarios
+        read perfectly on dev as well — 35/35 each.
+
+        legit_add_account scores 23/25 (92.0%) on dev against 9/12 (75.0%) on
+        the holdout. Same failure mode, small n on both; do not read the gap as
+        a split difference.
 
       END TO END (real extraction, openai/gpt-oss-120b, 30 new API calls,
       248 from cache, prompt bfcf0dd226c0, renderer 2.0.0, normaliser v2)

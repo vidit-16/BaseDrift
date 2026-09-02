@@ -190,9 +190,9 @@ data/generate_inbox.py  wraps the rendered cases in AP-inbox noise. Reads the
                         extraction cache
 data/vendor_master.csv  120 vendors — the trusted record, committed
 data/vendor_accounts.csv  272 accounts with provenance, committed
-data/cases_dev.csv      552 labeled cases, committed
+data/cases_dev.csv      622 labeled cases, committed
 data/cases_holdout.csv  278 cases — gitignored, regenerate to reproduce
-data/inbox_dev.csv      7,176 messages, 7.7% of them change requests
+data/inbox_dev.csv      8,086 messages, 7.7% of them change requests
 ```
 
 ## Setup
@@ -280,7 +280,7 @@ Then the steps that cost API calls:
 
 ```
 python src/pipeline.py                      # the hero case, one call
-python eval/extraction_eval.py --split dev  # 552 calls, ~$0.09
+python eval/extraction_eval.py --split dev  # 622 calls, ~$0.10
 python eval/triage_classifier_eval.py       # 405 calls, ~$0.05
 python eval/ablation.py                     # semantic vs keyword ablation
 ```
