@@ -369,7 +369,16 @@ def report(results, split, n):
     print()
 
     print("  PayeeProof, final outcome by scenario   (! marks a wrong outcome):")
-    for t in SCENARIOS:
+    # SCENARIOS fixes the READING ORDER, not the contents. It used to fix both,
+    # and when two scenarios were added to the generator they were evaluated
+    # correctly and then silently omitted from this table — 248 of 278 cases
+    # displayed, with nothing saying so. A report that can quietly drop a
+    # scenario is worse than one that prints it in an odd order.
+    seen = [t for t in SCENARIOS if pp.by_scenario.get(t)]
+    extra = sorted(t for t in pp.by_scenario
+                   if t not in SCENARIOS and pp.by_scenario[t])
+    shown = 0
+    for t in seen + extra:
         d = pp.by_scenario[t]
         tot = sum(d.values())
         if not tot:
@@ -379,7 +388,11 @@ def report(results, split, n):
         for k, v in sorted(d.items()):
             bad = (fraud and k == ALLOW) or ((not fraud) and k == BLOCK)
             parts.append(f"{'!' if bad else ''}{k}={v}")
-        print(f"    {t:20s} n={tot:4d}   {'  '.join(parts)}")
+        shown += tot
+        print(f"    {t:30s} n={tot:4d}   {'  '.join(parts)}")
+    assert shown == pp.n, (
+        f"the scenario table shows {shown} of {pp.n} cases; a scenario in the "
+        f"data has no row here")
     print()
     print("  rule fired:")
     for rule, c in pp.rules.most_common():
