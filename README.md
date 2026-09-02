@@ -191,7 +191,7 @@ data/generate_inbox.py  wraps the rendered cases in AP-inbox noise. Reads the
 data/vendor_master.csv  120 vendors — the trusted record, committed
 data/vendor_accounts.csv  272 accounts with provenance, committed
 data/cases_dev.csv      552 labeled cases, committed
-data/cases_holdout.csv  248 cases — gitignored, regenerate to reproduce
+data/cases_holdout.csv  278 cases — gitignored, regenerate to reproduce
 data/inbox_dev.csv      7,176 messages, 7.7% of them change requests
 ```
 
@@ -730,26 +730,49 @@ has to be set deliberately.
 
 ## The held-out result — v2
 
-**248 cases, the full split**, both rules-only and end to end with the live
-model.
+**278 cases, the full split**, both rules-only and end to end with the live
+model, scored 2026-09-02.
 
-**The holdout was scored twice, and both runs are below.** The first corpus was
-generated wrong — see *Why there are two runs* — so its numbers describe a
-dataset that no longer exists. Nothing was tuned from what it showed.
+**This is a re-score, and the distinction matters.** 249 of these cases were
+scored in August and that result has been read. What is genuinely unseen here is
+the trust-store rule described below — designed and measured entirely on dev —
+and the 29 cases appended with it. "We re-scored the holdout after a rule change
+developed on dev" is what happened; "fresh holdout" would not be true.
 
-| | v2 dev (552) | **v2 holdout (248)** | null baseline |
+| | v2 dev (622) | **v2 holdout (278)** | null baseline |
 |---|---|---|---|
 | recall | 100% | **100%** | 100% |
-| precision | 85.1% | **87.1%** | 85.8% |
+| precision | 86.4% | **87.7%** | 86.1% |
 | **false BLOCK** | 0.0% | **0.0%** | 0.0% |
-| held | 79.3% | **79.4%** | 100% |
-| false hold | 16.6% | **14.2%** | 15.7% |
+| held | 78.5% | **79.1%** | 100% |
+| false hold | 15.1% | **13.4%** | 15.5% |
 
-End to end, with the real model on all 248: **recall 100%, precision 87.1%,
+End to end, with the real model on all 278: **recall 100%, precision 87.7%,
 false BLOCK 0.0%** — identical to the perfect-extraction upper bound, agreeing
-on the rule fired in **98.8%** of cases. Zero extraction failures. Intent 99.6%,
-scope 99.6%, action 98.8%; all three misreads are `ADD` read as something else,
-and none changes an outcome.
+on the rule fired in **98.9%** of cases. Zero extraction failures on 278
+documents. Intent 99.6%, scope 99.6%, action 98.9%; every misread is `ADD` read
+as something else, and none changes an outcome.
+
+**The line the rule was written for**, on data it had never seen:
+
+| scenario | n | outcome |
+|---|---|---|
+| `fraud_exploit_planted_account` | 15 | 15 held |
+| `legit_switch_to_known_account` | 15 | 14 released, 1 held |
+
+An attacker who gets an account onto the vendor master with one accepted email,
+waits, and then asks for the money to go there passes every identity check
+honestly — the account really is on file, the name really matches, the sender
+really is the supplier's own domain because the mailbox is compromised rather
+than spoofed. The trust store is not fooled; it was poisoned earlier and is
+answering correctly about a fact that is itself the fraud.
+
+When that scenario was added, **19 of 35 such cases were released and recall
+fell to 93.8%**. The engine treated "on file" as one thing. It no longer does:
+a destination that has never been verified by anything outside email *and* has
+never settled a payout is INCONCLUSIVE, so it holds and is never rejected.
+Recall returned to 100% — earned this time, on a corpus that had just
+demonstrated it could fail.
 
 ### Why there are two runs
 

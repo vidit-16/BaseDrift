@@ -411,7 +411,7 @@ def main():
     print()
     rule("═")
     print("  Held, not rejected. The payout sits pending until a person acts.")
-    print("  On 248 held-out cases: 100% of fraud held, 0% of legitimate")
+    print("  On 278 held-out cases: 100% of fraud held, 0% of legitimate")
     print("  payments cancelled. v1 cancelled 2.2% of them outright.")
     rule("═")
 

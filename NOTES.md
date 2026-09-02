@@ -1484,13 +1484,94 @@ V2.G  R6 IS REACHABLE NOW, AND GETTING THERE FOUND A HOLE IN THE TRUST STORE
           gets no panel rather than a table of blanks implying everything is
           unverified — same principle as _unanchored() returning None.
 
-      STILL NOT DONE: the holdout has NOT been re-scored since this rule change.
-      The number in V2.4 predates it. Score it once, at the end, and report it
-      with its size — do not re-score it while anything is still moving.
+      DONE, in V2.H: the holdout was re-scored on 2026-09-02, 278 cases, and
+      every exploited plant held on data the rule never saw.
 
-      The extraction cache covers the original 800 only. The 100 new cases have
-      never been extracted, so eval/extraction_eval.py will make real API calls
-      for them the first time it runs — 100 cases, not 900.
+      The extraction cache covered the original 800 only. The holdout's 30 new
+      cases were extracted for V2.H; dev's 70 have still never been extracted,
+      so eval/extraction_eval.py --split dev will make 70 real API calls.
+
+
+V2.H  THE HOLDOUT, RE-SCORED AFTER THE TRUST-STORE FIX  (278 cases, 2026-09-02)
+
+      WHAT THIS IS, AND WHAT IT IS NOT. A RE-SCORE, not a virgin holdout. 249 of
+      these 278 cases were scored in V2.4 and that result has been read. Two
+      things here are genuinely unseen:
+
+        - the _unanchored() rule (V2.G). Designed, tuned and measured entirely
+          on dev; never run against the holdout until this line was written.
+        - the 29 appended cases, which had never been scored at all.
+
+      Say it that way round. "We re-scored the holdout after a rule change we
+      developed on dev" is true and is worth something. "Fresh holdout" is not
+      true and would be worth less than it sounds anyway.
+
+      RULES (perfect extraction, no model)
+
+        metric          dev 622   HOLDOUT 278   null    prev. holdout 249
+        recall           100.0%       100.0%   100.0%          100.0%
+        precision         86.4%        87.7%    86.1%           84.9%
+        false BLOCK        0.0%         0.0%     0.0%            0.0%
+        held              78.5%        79.1%   100.0%           77.9%
+        false hold        15.1%        13.4%    15.5%           16.0%
+
+        57 held cases carry a rejection recommendation and NONE is legitimate.
+        R6 fired 8, R7 fired 7 — both reachable on the holdout too.
+
+      THE LINE THE WHOLE OF V2.G WAS FOR, on data the rule never saw:
+
+        fraud_exploit_planted_account   n=15   STEP_UP_VERIFY=15
+        legit_switch_to_known_account   n=15   ALLOW=14  STEP_UP_VERIFY=1
+
+        Every exploited plant held. Fourteen of fifteen legitimate switches
+        released with no phone call. The rule generalises off dev.
+
+      END TO END (real extraction, openai/gpt-oss-120b, 30 new API calls,
+      248 from cache, prompt bfcf0dd226c0, renderer 2.0.0, normaliser v2)
+
+                       recall    prec   falseBLK   same rule as ideal
+          ideal        100.0%   87.7%       0.0%            —
+          real         100.0%   87.7%       0.0%          98.9%
+
+        THE EXTRACTOR COST NOTHING IN OUTCOMES AGAIN. Third split in a row.
+        Zero extraction failures on 278 documents. It disagrees with the
+        perfect-evidence bound on the rule fired in 3 cases and on the outcome
+        in none.
+
+        semantics   intent 99.6%   action 98.9%   scope 99.6%   all three 98.9%
+        claims      account 95.3%  IFSC 95.3%  GSTIN 97.8%  domain 96.0%
+                    amount 100.0%
+        leakage     0.0% baseline exact over all 278 rendered messages
+
+        Both new scenarios read perfectly: fraud_exploit_planted_account 15/15,
+        legit_switch_to_known_account 15/15.
+
+      THE THREE WEAK SPOTS, since an average hides them:
+
+        1  legit_add_account is the worst narrative at 9/12 semantics exact,
+           and every miss is the same one: ADD_FUND_ACCOUNT read as
+           REPLACE_PAYOUT_DESTINATION (2) or as NONE (1). That distinction is
+           what R4's design rests on. It changed no outcome here because R5
+           holds those cases anyway, which is luck rather than robustness.
+
+        2  channel_manipulation recall is 63.6% — 28 false negatives, zero
+           false positives. The model under-reads it badly. Tier 2, so it
+           changes nothing today, and see V2.G(f) about not quoting tier 2 as
+           catching anything.
+
+        3  Claim recovery sits at 95-96% for account and IFSC. Harmless by
+           construction — claims are never trusted as identity and the payout's
+           own destination is what gets checked — but do not report those as
+           extraction accuracy without saying which column they are.
+
+      AND THE CEILING, RESTATED BECAUSE IT KEEPS LOOKING LIKE A RESULT: recall
+      is 100% on a corpus written by the same people who wrote the rules. V2.G
+      made the corpus able to fail and it did fail, at 93.8%, until a rule
+      closed it. That is the strongest thing this project can currently say
+      about recall, and it is a statement about the exam as much as the student.
+
+      DO NOT RE-SCORE THE HOLDOUT AGAIN without a reason worth spending it on.
+      It has now been read twice.
 
 
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES
@@ -1536,6 +1617,9 @@ V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES
       we created ourselves.
 
 V2.4  ── DONE (Phase 6). Scored once, 249 cases, the full split.
+      SUPERSEDED by V2.H: the split is now 278 cases and was re-scored
+      on 2026-09-02 after the trust-store fix. The numbers below are the
+      2026-08 score and are kept as the record of what was true then.
 
         metric        v2 dev   v2 holdout   null      v1 holdout
         recall         100.0%      100.0%   100.0%        100.0%
