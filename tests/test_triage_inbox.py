@@ -365,9 +365,11 @@ def test_the_tier_guard_raises_rather_than_asserts():
     input in the system must not be one of the things an optimisation flag can
     remove — the same reasoning render.assert_no_leakage was written with.
     """
-    smuggled = Signal("inbox_smuggled", 1, PASS, "trust me", "mcp_inbox")
-    for bad in (smuggled,
-                Signal("inbox_clean", 2, PASS, "looks fine", "mcp_inbox")):
+    # Each of these trips exactly ONE half of the guard. Using a signal that is
+    # both Tier 1 and PASS would let either half cover for the other, which is
+    # how both halves came to be individually untested.
+    for bad in (Signal("inbox_promoted", 1, WARN, "tier only", "mcp_inbox"),
+                Signal("inbox_clean", 2, PASS, "pass only", "mcp_inbox")):
         try:
             IS.assert_cannot_release([bad])
         except AssertionError:
@@ -389,6 +391,62 @@ def test_decide_refuses_an_inbox_signal_that_claims_tier_one():
         assert "Tier 2" in str(err)
         return
     raise AssertionError("a Tier 1 PASS reached the rule table from the mailbox")
+
+
+def test_decide_refuses_inbox_evidence_that_tries_to_CLEAR_something():
+    """
+    The other half of the guard, and it had no test.
+
+    The tier-one test above smuggles a signal that is BOTH Tier 1 and PASS, so
+    the tier check alone catches it and the PASS check is never exercised.
+    Mutation testing found that: deleting `or sig.result == PASS` left the whole
+    suite green.
+
+    A correctly-tiered signal that PASSes is the dangerous shape, because Tier 2
+    is where inbox evidence legitimately lives. "This sender has written to us
+    fifty times" is a sentence a mailbox owner can make true, and a PASS is the
+    only result that can satisfy a rule requiring a clean signal — so it is the
+    one thing inbox evidence must never be able to say.
+    """
+    e = ExtractionResult(ok=True, intent=INTENT_FOLLOWUP, action=ACTION_NONE,
+                         scope=SCOPE_NONE, proposed_account_number=KNOWN_ACCT)
+    clearing = Signal("inbox_looks_fine", 2, PASS,
+                      "long established correspondence", "mcp_inbox")
+    try:
+        decide(e, FAVResult("active", "Balaji Logistics", 99), VENDOR,
+               destination_account_number=KNOWN_ACCT, inbox_signals=[clearing])
+    except ValueError as err:
+        assert "may never PASS" in str(err), str(err)
+        return
+    raise AssertionError(
+        "inbox evidence was allowed to PASS — it can now clear a signal")
+
+
+def test_decide_refuses_inbox_evidence_that_claims_TIER_ONE_without_passing():
+    """
+    The tier half of the same guard, isolated — and it had no test either.
+
+    Every existing case smuggles a signal that is BOTH Tier 1 AND PASS, so
+    either half of `sig.tier != 2 or sig.result == PASS` catches it and neither
+    is individually exercised. Mutation testing found this one after the PASS
+    half was fixed: deleting the tier check left the suite green.
+
+    A Tier 1 WARN from the mailbox is the shape that matters. Tier 1 is reserved
+    for comparisons against the vendor master — a record the merchant controls —
+    and it is the tier that can drive a rejection recommendation. Mailbox
+    evidence reaching it would let an attacker who owns a mailbox manufacture
+    adverse evidence about somebody else.
+    """
+    e = ExtractionResult(ok=True, intent=INTENT_FOLLOWUP, action=ACTION_NONE,
+                         scope=SCOPE_NONE, proposed_account_number=KNOWN_ACCT)
+    promoted = Signal("inbox_promoted", 1, WARN, "looks wrong to me", "mcp_inbox")
+    try:
+        decide(e, FAVResult("active", "Balaji Logistics", 99), VENDOR,
+               destination_account_number=KNOWN_ACCT, inbox_signals=[promoted])
+    except ValueError as err:
+        assert "Tier 2" in str(err), str(err)
+        return
+    raise AssertionError("mailbox evidence reached Tier 1 without being a PASS")
 
 
 def test_inbox_signals_can_hold_a_payout_that_would_otherwise_release():

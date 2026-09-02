@@ -107,6 +107,10 @@ Groq free tier. No credit card. console.groq.com
 - "Couldn't evaluate" is not "caught". An R1 hold is correct policy but is
   never scored as a detection — run_case() sets correct=None, scored=False.
 - The holdout is scored once, at the end, and reported with its size.
+- A compound guard needs a test per clause. `if a or b: raise` with one test
+  that trips both proves the guard exists and nothing about what it is made of —
+  either clause can then be deleted with the suite still green. Found twice in
+  the same session, both on the tier separation guards. See V2.I.
 - Whoever records a verification outcome may NOT release the payment. Enforced
   in casefile.may_release(), called server-side on POST. Do not "simplify" this
   into a disabled button, and do not add a single Approve control that skips
@@ -138,9 +142,9 @@ Groq free tier. No credit card. console.groq.com
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
 data generator + generated dev/holdout splits.
 
-273 tests across 8 suites, none needing an API key: `python tests/run_all.py`
+280 tests across 8 suites, none needing an API key: `python tests/run_all.py`
 (decision_engine 45, eval_harness 9, extractor 42, render 17,
-verifier+pipeline 44, webhook 59, triage_inbox 35, casefile 22).
+verifier+pipeline 44, webhook 62, triage_inbox 38, casefile 23).
 
 An early version of this file claimed 38 unit tests when zero existed. The
 claim was removed at the time rather than quietly left in place; the suites
@@ -1590,6 +1594,56 @@ V2.H  THE HOLDOUT, RE-SCORED AFTER THE TRUST-STORE FIX  (278 cases, 2026-09-02)
 
       DO NOT RE-SCORE THE HOLDOUT AGAIN without a reason worth spending it on.
       It has now been read twice.
+
+
+V2.I  MUTATION TESTING, AND A COMPOUND-GUARD BLIND SPOT IT FOUND TWICE
+
+      Fifteen targeted mutations of stated invariants, each a plausible edit
+      that breaks a guarantee this project claims out loud. Not a coverage
+      sweep — if the suite stays green after one, the guarantee is described
+      rather than enforced, and that is the finding.
+
+      Killed on the first pass: the two-person rule (verifier releasing their
+      own case, release with nothing verified, a denial losing its stickiness,
+      case-insensitive identity, arbitrary actions reaching the audit trail),
+      the trust-store anchor in all three of its forms, R5 and R6 removal, and
+      the server-side release guard on the HTTP path.
+
+      THE LESSON, WHICH COST TWO ROUNDS TO LEARN.
+      decide() carries `if sig.tier != 2 or sig.result == PASS: raise`. Every
+      test of it smuggled a signal that was BOTH Tier 1 AND PASS — so either
+      half caught it, and NEITHER half was individually exercised. Deleting
+      either clause left 278 tests green.
+
+      A compound condition needs a case per clause. A test that trips both at
+      once proves the guard exists and proves nothing about what it is made of.
+      The same shape appeared a second time in
+      inbox_signals.assert_cannot_release(), for the same reason, and was found
+      only because the first fix made the second visible.
+
+      Four tests now isolate the halves: a Tier 2 PASS (clears something it must
+      never clear) and a Tier 1 WARN (reaches the tier that can drive a
+      rejection), against both guards. Look for this pattern anywhere else an
+      `or` guards an invariant.
+
+      TWO SURVIVORS THAT ARE NOT DEFECTS, recorded so nobody "fixes" them:
+
+        - casefile's contested branch is redundant with its not-verified branch;
+          both refuse the release. What differs is the REASON given, and
+          "verification did not hold up" is a different instruction to an
+          operator than "nothing is verified yet". A test now pins the message,
+          which is what makes the branch load-bearing.
+
+        - inbox_signals.assert_cannot_release() is a SECOND guard; decide()
+          carries an independent one. Removing either alone leaves the system
+          safe, which is the point of defence in depth. Mutation testing reads
+          that as a survivor and it is worth understanding rather than
+          eliminating — but each guard still needs its own tests, which is what
+          the rounds above added.
+
+      Also from this pass: assert_cannot_release used bare `assert`, which
+      python -O strips. It raises TierViolation now, and the suite is run under
+      -O as well.
 
 
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES

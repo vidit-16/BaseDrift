@@ -171,7 +171,7 @@ COMPLIANCE.md           what production would have to satisfy, and why
                         anonymisation is not available to this design
 NOTES.md                the working log: every v2 item, what it measured, and
                         what it does not show
-tests/                  273 tests across 8 suites, none needing an API key
+tests/                  280 tests across 8 suites, none needing an API key
                         run them all: python tests/run_all.py
 eval/rules_eval.py      decision-engine scoring vs baselines, no API key needed
 eval/triage_eval.py     inbox funnel scoring, including the allowlist
@@ -206,7 +206,7 @@ python data/generate_inbox.py   # the AP inbox around those cases
 Everything below this line runs with **no API key**:
 
 ```
-python tests/run_all.py       # 273 tests across 8 suites
+python tests/run_all.py       # 280 tests across 8 suites
 python eval/rules_eval.py     # rule scoring vs baselines
 python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
 python eval/base_rates.py     # daily call volume vs the null baseline
@@ -1116,7 +1116,7 @@ to prevent.
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency handling; document correlation; the rules evaluation and the
 ablation; the operator dashboard; the inbox triage funnel and its MCP tool
-layer; the case file and its server-side two-person rule; 273 tests.
+layer; the case file and its server-side two-person rule; 280 tests.
 
 **Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
 vendor lookups that would be API reads. FAV results are replayed
