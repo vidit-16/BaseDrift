@@ -308,7 +308,8 @@ def render_index(audits: List[Dict[str, Any]]) -> str:
                    + (f" · {rec} recommended for rejection" if rec else ""),
                    "<a href=\"/inbox\">← inbox</a>")
     body += "<h2>Decisions, newest first</h2><table><thead><tr>"
-    for h in ("payout", "vendor", "destination", "document", "rule", "outcome"):
+    for h in ("Payment", "Supplier", "Destination", "Change request",
+              "Why", "Outcome"):
         body += f"<th>{h}</th>"
     body += "</tr></thead><tbody>"
 
@@ -324,8 +325,13 @@ def render_index(audits: List[Dict[str, Any]]) -> str:
             f"<td class=\"mono\">{_e(a.get('vendor_id'))}</td>"
             f"<td class=\"mono\">{_e(dest.get('account_number'))}"
             f"<div class=\"note\">{'from the payout' if verified else 'UNVERIFIED'}</div></td>"
-            f"<td class=\"mono\">{_e(doc.get('correlation'))}</td>"
-            f"<td class=\"mono\">{_e(d.get('rule_fired'))}</td>"
+            f"<td>{_e(V.correlation(doc.get('correlation')))}</td>"
+            # The sentence an operator can act on, with the rule name kept
+            # underneath for whoever has to audit which rule actually fired.
+            # This column was the last place in the dashboard still showing a
+            # bare identifier as its primary text.
+            f"<td>{_e(V.rule(d.get('rule_fired')))}"
+            f"<div class=\"note mono\">{_e(d.get('rule_fired'))}</div></td>"
             f"<td>{_outcome_pill(a.get('final_outcome', '?'))}"
             f"{_recommendation(d)}</td>"
             "</tr>"
@@ -909,7 +915,9 @@ def render_case(a: Optional[Dict[str, Any]], case=None, actor: str = "",
         ("Fund account", dest.get("fund_account_id")),
         ("Amount", f"Rs {a['amount_rupees']:,.2f}" if a.get("amount_rupees") else "not stated"),
         ("Change request", doc.get("document_id") or "none on file"),
-        ("Correlated by", doc.get("correlation")),
+        ("Correlated by",
+         f"{V.correlation(doc.get('correlation'))} "
+         f"[{doc.get('correlation')}]"),
         ("Evidence source", f"{V.source(ev_code)} [{ev_code}]"),
         ("Semantic reading",
          f"{sem.get('intent')} / {sem.get('action')} / {sem.get('scope')}"

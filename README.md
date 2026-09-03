@@ -175,7 +175,7 @@ COMPLIANCE.md           what production would have to satisfy, and why
                         anonymisation is not available to this design
 NOTES.md                the working log: every v2 item, what it measured, and
                         what it does not show
-tests/                  301 tests across 9 suites, none needing an API key
+tests/                  303 tests across 9 suites, none needing an API key
                         run them all: python tests/run_all.py
 tools/snapshot.py       freezes the dashboard into docs/ as static HTML,
                         so it can be shared without exposing POST routes
@@ -213,7 +213,7 @@ python data/generate_inbox.py   # the AP inbox around those cases
 Everything below this line runs with **no API key**:
 
 ```
-python tests/run_all.py       # 301 tests across 9 suites
+python tests/run_all.py       # 303 tests across 9 suites
 python eval/rules_eval.py     # rule scoring vs baselines
 python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
 python eval/base_rates.py     # daily call volume vs the null baseline
@@ -769,11 +769,15 @@ changes right and all 115 follow-ups wrong.)
 | action | **100%** | **100%** |
 | scope | **100%** | **100%** |
 | all three exact | **100%** | **100%** |
-| account · IFSC · GSTIN · domain | 99.8% · 99.5% · 96.6% · 97.4% | 100% · 99.6% · 95.7% · 96.0% |
+| account · IFSC · GSTIN | **100% · 100% · 100%** | **100% · 100% · 100%** |
 | amount | 100% | 100% |
+| sender domain | 97.3% | 96.0% |
 | urgency (precision / recall) | 89.1% / 100% | 84.4% / 100% |
-| channel manipulation | 100% / **70.2%** | 100% / **61.0%** |
+| channel manipulation | 100% / **71.6%** | 100% / **61.0%** |
 | extraction failed | **0.0%** | **0.0%** |
+
+Every semantic field and every claim except sender domain is exact on all 900
+documents, with no extraction failures on either split.
 
 **End to end the extractor costs nothing, on both splits:**
 
@@ -783,6 +787,8 @@ changes right and all 115 follow-ups wrong.)
 | **dev — with real extraction** | **100%** | **86.6%** | **0.0%** | **98.9%** |
 | holdout — rules-only reference | 100% | 87.7% | 0.0% | — |
 | **holdout — with real extraction** | **100%** | **87.7%** | **0.0%** | **99.3%** |
+
+Prompt `7312811f5ddf`, renderer 2.0.0, 900 documents extracted, 0 failures.
 
 That is not luck, it is the architecture doing what it was built to do. Identity
 never comes from the extracted claims — the destination is read from the payout's
@@ -817,11 +823,28 @@ which would defeat lookalike detection entirely, since the edit distance is
 computed on registrable labels. Normalising that took domain recovery from 91.7%
 to 100%.
 
-Caveats that travel with these numbers: one run, one model. The extractor is not
-reproducible run to run, so a single pass is one sample — `--runs N` reports the
-spread. Claim recovery sits at 95–97%; it is harmless by construction, because
-claims are never trusted as identity, but it is not the number to quote as
-"extraction accuracy" without saying which column it is.
+**The two that are not perfect, and why they are left that way.**
+
+`sender_domain` at 96–97% is the normalisation issue described above: the model
+returns `accounts@vendor.com` where a registrable domain was asked for. It is
+corrected before the domain reaches `check_domain`, so it costs nothing, and the
+raw recovery number is reported rather than the post-normalisation one.
+
+**Channel manipulation recall is 61–72%, and an attempt to improve it failed.**
+69 of 72 misses have a redirect phrase sitting in the email, so the model is
+looking at it and not seeing it — a real weakness, not a corpus artifact. A
+rewritten definition, measured over two runs on 40 cases, moved it 73.8% → 75.0%
+— half a case, well inside the old wording's own [30, 29] spread. That change was
+**reverted rather than kept**: shipping prompt text measured to do nothing is the
+same "survives by being unmeasured" pattern this project keeps finding in itself,
+and worse here, because the measurement exists. Since R4's corroboration became
+independent, this signal now genuinely affects decisions, so it is the open item
+worth a different approach rather than better wording.
+
+Caveats that travel with these numbers: one run per split, one model. The
+extractor is not reproducible run to run — GSTIN recovery swung 13 points
+between two passes of the same 30 cases while the "regression" being chased was
+1.1 points — so a single pass is one sample, and `--runs N` reports the spread.
 
 ---
 
@@ -1203,7 +1226,7 @@ to prevent.
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency handling; document correlation; the rules evaluation and the
 ablation; the operator dashboard; the inbox triage funnel and its MCP tool
-layer; the case file and its server-side two-person rule; 301 tests.
+layer; the case file and its server-side two-person rule; 303 tests.
 
 **Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
 vendor lookups that would be API reads. FAV results are replayed

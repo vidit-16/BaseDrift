@@ -213,7 +213,10 @@ CRITICAL: judge intent by meaning, not keywords. A message may contain account n
 
 EXTRACTION RULES
 - sender_domain: from the From: address only, never from body text
-- proposed_gstin: extract even when hedged ("should be the same as before")
+- proposed_gstin: the GST number written in the message, whenever one appears,
+  including when it is hedged. This field alone is about what the message
+  STATES. proposed_account_number and proposed_ifsc are not: leave those null
+  unless the message asks for the destination to change.
 - amount: resolve shorthand — "Rs 3 lakh" -> 300000, "28k" -> 28000
 - urgency_detected: true even when urgency is implied rather than stated (e.g. "month-end closing is tomorrow")
 - hedging_detected: true if a claim is qualified ("should be", "I think", "same as before")

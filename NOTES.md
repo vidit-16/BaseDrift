@@ -149,10 +149,10 @@ Groq free tier. No credit card. console.groq.com
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
 data generator + generated dev/holdout splits.
 
-301 tests across 9 suites, none needing an API key: `python tests/run_all.py`
+303 tests across 9 suites, none needing an API key: `python tests/run_all.py`
 (decision_engine 48, eval_harness 9, extractor 47, render 17,
 verifier+pipeline 44, webhook 66, triage_inbox 38, casefile 23,
-notifier 9).
+notifier 9). webhook is 68 with the vocabulary leak checks.
 
 An early version of this file claimed 38 unit tests when zero existed. The
 claim was removed at the time rather than quietly left in place; the suites
@@ -1866,6 +1866,81 @@ V2.M  R4 CLAIMED CORROBORATION IT DID NOT HAVE
       or settled_payout_count. So R6 is defence in depth whose depth is zero on
       synthetic data with a complete master, and that is the honest way to say
       it rather than claiming it earns its keep today.
+
+
+V2.N  THE GSTIN "DROP" WAS NOISE, THE AMBIGUITY UNDER IT WAS REAL, AND THE
+      CHANNEL FIX FAILED
+
+      Asked to fix two extraction numbers that fell after the ADD/REPLACE
+      prompt change: GSTIN 97.7 -> 96.6% dev and 97.8 -> 95.7% holdout, channel
+      recall 72.3 -> 70.2% and 63.6 -> 61.0%.
+
+      (a) NEITHER "DROP" WAS REAL. Measured over two runs of the same 30 dev
+          follow-ups, the OLD prompt scored GSTIN [22, 26] — a 13-point swing
+          on identical inputs, against a 1.1-point drop being chased. The
+          variance is ten times the signal. Chasing single-run deltas on this
+          extractor is chasing nothing, and only the A/B separated them.
+
+      (b) BUT THERE WAS A REAL AMBIGUITY UNDERNEATH. Every one of the 33 GSTIN
+          misses was action_type=NONE — a follow-up. Zero on REPLACE (696) or
+          ADD (37). The field is proposed_gstin and a follow-up proposes
+          nothing, so the model returned null; the corpus expected the stated
+          value.
+
+          render.py already carried the exemption for exactly this, applied to
+          two fields and not the third:
+
+            "account_number": None if sem["action"] == "NONE" else acct,
+            "ifsc":           None if sem["action"] == "NONE" else ifsc,
+            "gstin":          row["proposed_gstin"],       <- no exemption
+
+          Same prefix, opposite expectations. Copying the exemption would have
+          been wrong too: the model returns the GSTIN on 134 of 167 follow-ups,
+          so expecting null would have broken 134 correct answers to fix 33.
+
+      (c) THE FIRST FIX BLED. Wording that argued against the field name — "the
+          field name says proposed, but" — took GSTIN to 100% and dropped dev
+          account number 99.8 -> 97.6% and IFSC 99.5 -> 97.6%. All 15 new
+          mismatches were follow-ups where the corpus expects null and the
+          model returned a stated account: it had generalised the argument to
+          proposed_account_number.
+
+          Both fields dropping by the identical amount is what gave it away.
+          One cause, not noise.
+
+      (d) SCOPING IT FIXED BOTH. Wording that states what to extract and names
+          the boundary — this field is about what the message STATES,
+          proposed_account_number and proposed_ifsc are not — teaches the
+          exception instead of undermining the rule. Measured on 30 dev
+          follow-ups, two runs:
+
+            baseline   gstin 23.0/30 [22, 24]   account-null 29.5/30 [30, 29]
+            scoped     gstin 30.0/30 [30, 30]   account-null 30.0/30 [30, 30]
+
+          Full re-extraction, prompt 7312811f5ddf, both splits, 0 failures:
+          intent, action, scope, account, IFSC, GSTIN and amount ALL 100% on
+          900 documents. sender_domain 97.3/96.0% is the known normalisation
+          issue and costs nothing.
+
+      (e) THE CHANNEL FIX FAILED AND WAS REVERTED. 69 of 72 misses have a
+          redirect phrase in the email, so the model is looking at it and not
+          seeing it — a real weakness. A rewritten definition moved recall
+          73.8 -> 75.0% over two runs of 40 cases: half a case, inside the old
+          wording's own [30, 29] spread.
+
+          Removed rather than kept. Shipping prompt text measured to do nothing
+          is the "survives by being unmeasured" pattern this project keeps
+          finding, and worse here because the measurement exists. Channel
+          recall stays 61-72% and is now an OPEN item that matters more than it
+          did: since V2.M made R4's corroboration independent, this signal
+          genuinely affects decisions. It needs a different approach, not
+          better prose.
+
+      WHAT THIS COST: roughly 3,000 API calls across three prompt attempts and
+      four A/Bs. What made it affordable was that the cache keys on prompt hash,
+      so every previous prompt's 900 extractions survive and reverting is free
+      and instant. Being able to be wrong cheaply is why the wrong ones were
+      caught.
 
 
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES

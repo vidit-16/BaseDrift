@@ -1198,6 +1198,89 @@ def test_the_replay_never_reads_the_fraud_label():
         "the replay reads the ground-truth label")
 
 
+def test_no_view_shows_an_identifier_without_its_translation():
+    """
+    Every internal code on screen must be accompanied by the sentence it means.
+
+    The identifier is kept on purpose — the rule table is the authoritative
+    policy and an auditor needs to see which rule actually fired. What is not
+    allowed is the identifier ALONE, because an accounts-payable clerk cannot
+    act on `R5_tier1_inconclusive` or `explicit_note`.
+
+    Three of the four views were translated when vocabulary.py was written and
+    the decisions index was missed, so it showed bare rule names and bare
+    correlation codes on every row for as long as it existed. This checks all
+    four rather than the three somebody remembered.
+    """
+    import dashboard
+    import vocabulary as V
+
+    audit = {
+        "payout_id": "pout_1", "vendor_id": "VEND0069",
+        "final_outcome": "STEP_UP_VERIFY", "payout_allowed": False,
+        "destination": {"account_number": "434392416664",
+                        "source": "razorpay_fund_account"},
+        "document": {"document_id": "doc_1", "correlation": "explicit_note"},
+        "extraction": {"ok": True, "evidence_source": "llm_extraction",
+                       "semantic": {"intent": "BENEFICIARY_CHANGE",
+                                    "action": "REPLACE_PAYOUT_DESTINATION",
+                                    "scope": "OUTSTANDING_AND_FUTURE"}},
+        "decision": {"rule_fired": "R5_tier1_inconclusive",
+                     "reason": "identity unconfirmed",
+                     "tier1": [{"name": "account_continuity", "result": "WARN",
+                                "detail": "new account", "source": "vendor_master"}]},
+        "razorpay_actions": [],
+    }
+    row = {"message_id": "<m@x>", "from": "a@b.com", "subject": "s",
+           "body": "b", "verdict": "ROUTE", "match": "exact",
+           "received_at": 1.0, "document_id": "doc_1",
+           "final_outcome": "STEP_UP_VERIFY", "audit": audit,
+           "rule_fired": "R5_tier1_inconclusive",
+           "recommended_action": None}
+
+    views = {
+        "index": dashboard.render_index([audit]),
+        "inbox": dashboard.render_inbox([row]),
+        "message": dashboard.render_message(row),
+        "case": dashboard.render_case(audit, case=[], actor="Priya Menon"),
+    }
+
+    # Every vocabulary map: if the CODE reaches the page, the SENTENCE must too.
+    maps = [("rule", V.RULE), ("outcome", V.OUTCOME),
+            ("correlation", V.CORRELATION), ("signal", V.SIGNAL),
+            ("result", V.RESULT), ("source", V.SOURCE), ("verdict", V.VERDICT)]
+
+    naked = []
+    for view, page in views.items():
+        for kind, table in maps:
+            for code, label in table.items():
+                if not code or code not in page:
+                    continue
+                text = label[0] if isinstance(label, tuple) else label
+                if text not in page:
+                    naked.append(f"{view}: {kind} {code!r} shown without "
+                                 f"{text!r}")
+    assert not naked, "identifiers on screen with nothing explaining them:\n  " \
+                      + "\n  ".join(naked)
+
+
+def test_the_decisions_index_reads_as_english():
+    """The specific regression: bare rule and correlation codes on every row."""
+    import dashboard
+    audit = {
+        "payout_id": "pout_1", "vendor_id": "VEND0069",
+        "final_outcome": "STEP_UP_VERIFY", "payout_allowed": False,
+        "destination": {"account_number": "1", "source": "razorpay_fund_account"},
+        "document": {"correlation": "none_found"},
+        "decision": {"rule_fired": "R2b_followup_unverified_destination"},
+    }
+    html = dashboard.render_index([audit])
+    assert "Money going somewhere new with nothing authorising it" in html
+    assert "No request on file" in html
+    # and the auditor still gets the exact rule
+    assert "R2b_followup_unverified_destination" in html
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]

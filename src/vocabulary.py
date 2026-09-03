@@ -168,6 +168,19 @@ MATCH = {
     "none":      ("No supplier matched", ""),
 }
 
+# ── How a payout was matched to a change request ─────────────────────
+#
+# Whether the payout NAMED the request or we found one that looked recent
+# enough is a real difference in evidence, and it was reaching the screen as a
+# bare identifier.
+
+CORRELATION = {
+    "explicit_note":     "Named on the payout",
+    "recent_for_vendor": "Matched to a recent request",
+    "none_found":        "No request on file",
+}
+
+
 # ── Verification ─────────────────────────────────────────────────────
 
 VERIFICATION = {
@@ -214,6 +227,10 @@ def verdict(code):
 
 def verification(code):
     return VERIFICATION.get(code, _fallback(code))
+
+
+def correlation(code):
+    return CORRELATION.get(code, _fallback(code))
 
 
 def match(code):
