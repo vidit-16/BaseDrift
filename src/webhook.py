@@ -61,6 +61,7 @@ from extractor import (
 )
 import extractor as extractor_mod
 import casefile
+import notifier
 import verifier
 
 log = logging.getLogger("payeeproof.webhook")
@@ -253,7 +254,24 @@ class Store:
         elif casefile.state_of(actions, final) in ("released", "rejected"):
             raise PermissionError(
                 "This case is closed. Nothing further can be recorded on it.")
-        return casefile.record(actions, action, actor, note=note, detail=detail)
+        entry = casefile.record(actions, action, actor, note=note, detail=detail)
+
+        # Tell the merchant's own systems, AFTER the record exists. A case is
+        # resolved because it is written down, not because a POST succeeded —
+        # so notify() cannot raise and its result is deliberately ignored. See
+        # src/notifier.py.
+        if action in casefile.RESOLUTIONS:
+            try:
+                notifier.notify(payout_id, a, list(actions), action, actor)
+            except Exception as e:                             # noqa: BLE001
+                # notify() already swallows delivery failures. This catches
+                # everything BEFORE the POST — building the event, serialising
+                # an audit that turns out to hold something json cannot encode
+                # — because the guarantee belongs to the caller, not to the
+                # notifier's good intentions. A test kills a release by making
+                # notify() itself raise, and it must not.
+                log.warning("case notification for %s raised: %s", payout_id, e)
+        return entry
 
     def record_audit(self, audit: Dict[str, Any]) -> None:
         self.audits.appendleft(audit)

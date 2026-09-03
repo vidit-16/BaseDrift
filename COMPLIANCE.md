@@ -208,6 +208,23 @@ on the provider-assigned id rather than the `Message-ID:` header. The header is
 attacker-written, so keying on it would let a sender collide with a processed id
 and have their own change request silently dropped.
 
+**3b. The outbound notification is a new egress path.**
+`src/notifier.py` POSTs a case resolution to a merchant-configured URL when a
+payout is released or refused. It carries the payout id, the vendor id, the
+destination account and who recorded what — the same audience as the dashboard,
+and nothing the merchant does not already hold about their own payout.
+
+Three things about it are deliberate. It is HMAC-signed with the scheme we
+require of Razorpay inbound, because an unsigned "this payout was released" is
+worth forging. It is off unless PAYEEPROOF_WEBHOOK_URL is set. And a delivery
+failure cannot affect a decision — the notifier swallows POST errors and the
+call site catches anything raised before the POST.
+
+What it still needs: TLS is the deployment's responsibility (nothing here
+enforces https), the URL is trusted as configured with no allowlist, and
+delivery is fire-and-forget rather than a durable queue. A misconfigured URL
+sends payout metadata to whoever owns it, and no signature prevents that.
+
 **4. Encryption at rest and in transit for the stores.**
 Vendor master, document store and audit trail.
 

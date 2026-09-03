@@ -158,6 +158,10 @@ src/dashboard.py        operator view: decisions, and the evidence behind each
 src/demo.py             the two-minute demo: one real fraud case carried
                         end to end through the real code. Runs with or
                         without an API key and says which
+src/notifier.py         the OUTBOUND webhook: tells the merchant's own
+                        systems when a case resolves. Signed, off unless
+                        configured, and structurally unable to affect a
+                        decision by failing.
 src/webhook_demo.py     drives the real endpoint over real signed HTTP
 src/triage.py           inbox funnel: dedupe -> ingest rules -> vendor
                         resolution (no model) -> classification
@@ -171,7 +175,7 @@ COMPLIANCE.md           what production would have to satisfy, and why
                         anonymisation is not available to this design
 NOTES.md                the working log: every v2 item, what it measured, and
                         what it does not show
-tests/                  292 tests across 8 suites, none needing an API key
+tests/                  301 tests across 9 suites, none needing an API key
                         run them all: python tests/run_all.py
 tools/snapshot.py       freezes the dashboard into docs/ as static HTML,
                         so it can be shared without exposing POST routes
@@ -209,7 +213,7 @@ python data/generate_inbox.py   # the AP inbox around those cases
 Everything below this line runs with **no API key**:
 
 ```
-python tests/run_all.py       # 292 tests across 8 suites
+python tests/run_all.py       # 301 tests across 9 suites
 python eval/rules_eval.py     # rule scoring vs baselines
 python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
 python eval/base_rates.py     # daily call volume vs the null baseline
@@ -340,6 +344,44 @@ unknown vendor, unreadable document, a crashed process, PayeeProof being down
 entirely — leaves the money where it is. There is no code path that releases a
 payout on error, which is why a 500 is an acceptable response: Razorpay retries,
 and nothing has moved in the meantime.
+
+### Telling the merchant's systems how it ended
+
+The inbound webhook is Razorpay saying a payout is pending. The outbound one is
+PayeeProof saying a held payout was released or refused, and by whom — otherwise
+an ERP can only learn the outcome by someone watching the dashboard.
+
+```
+POST https://your-erp/hook
+X-PayeeProof-Signature: <hmac-sha256 of the exact body, PAYEEPROOF_WEBHOOK_SECRET>
+
+{"event": "payeeproof.case.released",
+ "payload": {"case": {
+    "payout_id": "pout_1", "resolution": "released",
+    "resolved_by": "Rahul Iyer", "rule_fired": "R5_tier1_inconclusive",
+    "history": [{"action": "callback_confirmed", "actor": "Priya Menon", ...},
+                {"action": "released",           "actor": "Rahul Iyer",  ...}]}}}
+```
+
+Configured with `PAYEEPROOF_WEBHOOK_URL` and `PAYEEPROOF_WEBHOOK_SECRET`; with
+no URL it does nothing and says nothing.
+
+**It fires only on `released` and `rejected`.** Intermediate states are not facts
+another system can act on, and every extra emission is one more place an account
+number travels.
+
+**A failed delivery cannot affect a decision.** The case is resolved because it
+is written down, not because a POST succeeded — so the notifier swallows delivery
+errors *and* the call site catches everything before the POST too. A test kills a
+release by making the notifier itself raise, and the release still happens. That
+test found a real gap: `build_event` and `json.dumps` run outside the notifier's
+own `try`, so a non-serialisable audit would have taken a release down with it.
+
+**It is signed with the scheme we demand of Razorpay.** Telling a finance system
+"this payout was released" is worth forging, and sending unsigned would be asking
+of others what we refuse ourselves. Production still wants a durable queue — this
+posts once, inline, and a dropped event is dropped; the event id is there for the
+receiver to deduplicate on.
 
 ### Signature verification
 
@@ -1161,7 +1203,7 @@ to prevent.
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency handling; document correlation; the rules evaluation and the
 ablation; the operator dashboard; the inbox triage funnel and its MCP tool
-layer; the case file and its server-side two-person rule; 292 tests.
+layer; the case file and its server-side two-person rule; 301 tests.
 
 **Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
 vendor lookups that would be API reads. FAV results are replayed

@@ -149,9 +149,10 @@ Groq free tier. No credit card. console.groq.com
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
 data generator + generated dev/holdout splits.
 
-292 tests across 8 suites, none needing an API key: `python tests/run_all.py`
+301 tests across 9 suites, none needing an API key: `python tests/run_all.py`
 (decision_engine 48, eval_harness 9, extractor 47, render 17,
-verifier+pipeline 44, webhook 66, triage_inbox 38, casefile 23).
+verifier+pipeline 44, webhook 66, triage_inbox 38, casefile 23,
+notifier 9).
 
 An early version of this file claimed 38 unit tests when zero existed. The
 claim was removed at the time rather than quietly left in place; the suites

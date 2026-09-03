@@ -18,6 +18,7 @@ SUITES = [
     "test_webhook.py",
     "test_triage_inbox.py",
     "test_casefile.py",
+    "test_notifier.py",
 ]
 
 
