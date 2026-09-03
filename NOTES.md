@@ -149,8 +149,8 @@ Groq free tier. No credit card. console.groq.com
 Built: llm_client, extractor, decision_engine, verifier, pipeline, ablation,
 data generator + generated dev/holdout splits.
 
-289 tests across 8 suites, none needing an API key: `python tests/run_all.py`
-(decision_engine 45, eval_harness 9, extractor 47, render 17,
+292 tests across 8 suites, none needing an API key: `python tests/run_all.py`
+(decision_engine 48, eval_harness 9, extractor 47, render 17,
 verifier+pipeline 44, webhook 66, triage_inbox 38, casefile 23).
 
 An early version of this file claimed 38 unit tests when zero existed. The
@@ -1816,6 +1816,55 @@ V2.L  THE ADD/REPLACE MISREAD, AND TWO MISTAKES MADE FIXING IT
       and 97.8 -> 95.7%, and channel recall 72.3 -> 70.2% and 63.6 -> 61.0%.
       Both are Tier 2 or claim-only and neither moved an outcome, but they moved
       the wrong way and are recorded rather than left for someone to find.
+
+
+V2.M  R4 CLAIMED CORROBORATION IT DID NOT HAVE
+
+      Asked what narrowing tier 2 would cost, and measured four worlds instead
+      of arguing. Two of them came out identical, which was the finding.
+
+        variant                              recall  prec        false hold   R4
+        A  as shipped                        100%    86.4/87.7   15.1/13.4    62/26
+        B  R6 removed                        100%    86.6/88.3   14.8/12.7    62/26
+        C  tier 2 removed ENTIRELY           100%    86.6/88.3   14.8/12.7    62/26
+        D  corroboration made independent    100%    86.4/87.7   15.1/13.4    58/24
+
+      B AND C BEING IDENTICAL IS THE PROOF. Deleting tier 2 from the engine
+      altogether changed nothing that deleting R6 alone did not, so R4's
+      "+ >= 1 Tier 2 WARN" clause never constrained anything.
+
+      The cause: the ONLY signal that sets deception is sender_domain, and
+      sender_domain is itself a Tier 2 WARN. `deception and len(t2_warn) >= 1`
+      is therefore just `deception`. The clause read like a second, independent
+      requirement and was satisfied by the first.
+
+      IT MADE THE AUDIT RECORD UNTRUE, which is worse than redundant. The reason
+      string said "corroborated by 2 contextual risk signal(s) (sender_domain,
+      urgency)" — listing the impersonation among the things corroborating the
+      impersonation — and on 4 of 62 dev firings sender_domain was the ONLY Tier
+      2 warning present. The rule asserted corroboration where there was none,
+      in the sentence an operator reads before recommending a refusal.
+
+      FIXED (variant D): corroboration is now `[s for s in t2_warn if not
+      s.deception]`, the reason says "corroborated independently by", and the
+      rule table in the module docstring was updated in the same commit, because
+      it declares itself authoritative.
+
+      Cost: R4 fires 58 instead of 62 on dev, 24 instead of 26 on holdout.
+      Recall stays 100% on both — those cases are still HELD, by R5 or R6. What
+      they lose is the rejection recommendation, which is precisely the thing
+      that ought to need corroborating. Rejection recommendations fell 21.1% ->
+      20.4% on dev and 20.5% -> 19.8% on holdout.
+
+      R6 WAS DELIBERATELY LEFT ALONE, and the reason is worth keeping. On this
+      corpus it holds 15 dev and 8 holdout cases, every one legitimate, and
+      catches nothing — measurably pure cost. But it is the only rule left
+      standing for a planted account already ON FILE when the vendor master
+      carries no provenance columns: _unanchored() returns None there, tier 1
+      goes clean, and R5 never fires. Real merchant data often has no added_via
+      or settled_payout_count. So R6 is defence in depth whose depth is zero on
+      synthetic data with a complete master, and that is the honest way to say
+      it rather than claiming it earns its keep today.
 
 
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES

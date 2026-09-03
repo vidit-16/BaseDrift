@@ -429,6 +429,60 @@ def test_bec_pattern_still_caught():
     assert d.rule_fired == "R4_bec_pattern"
 
 
+def test_r4_needs_corroboration_that_is_not_the_impersonation_itself():
+    """
+    A lookalike domain alone must not recommend a rejection.
+
+    R4 read "deception and >= 1 Tier 2 WARN" for a long time, and that never
+    constrained anything: the only signal setting deception is sender_domain,
+    and sender_domain IS a Tier 2 WARN, so the second clause was satisfied by
+    the first. Removing Tier 2 from the engine entirely produced numbers
+    identical to removing R6 alone, which is how it surfaced.
+
+    The audit record was the casualty. The reason string said "corroborated by
+    2 contextual risk signal(s) (sender_domain, urgency)" — counting the
+    impersonation as its own corroboration — and on 4 of 62 dev firings
+    sender_domain was the only Tier 2 warning there was. An operator reads that
+    sentence before recommending somebody's payment be refused.
+
+    Here the domain is a typosquat and nothing else is adverse: no urgency, no
+    channel redirection, an ordinary amount. That is a hold, not a rejection.
+    """
+    e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+            account=NEW_ACCT, domain="balaj1logistic.com",
+            urgency=False, channel=False, amount=28000.0)
+    d = run(e, dest=NEW_ACCT)
+    assert d.payout_allowed is False, "a typosquat must still hold the payout"
+    assert d.rule_fired != "R4_bec_pattern", (
+        "R4 fired with the impersonation as its own corroboration")
+    assert d.recommended_action != "reject"
+
+
+def test_r4_still_fires_when_something_else_corroborates():
+    """The counterpart: one independent warn is enough, and one is the bar."""
+    e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+            account=NEW_ACCT, domain="balaj1logistic.com",
+            urgency=True, amount=28000.0)
+    d = run(e, dest=NEW_ACCT)
+    assert d.rule_fired == "R4_bec_pattern"
+    assert d.recommended_action == "reject"
+
+
+def test_the_r4_reason_does_not_count_the_impersonation_as_corroboration():
+    """
+    The sentence an operator acts on has to be true. It used to list
+    sender_domain among the signals said to corroborate sender_domain.
+    """
+    e = ext(intent=INTENT_CHANGE, action=ACTION_REPLACE, scope=SCOPE_BOTH,
+            account=NEW_ACCT, domain="balaj1logistic.com",
+            urgency=True, amount=28000.0)
+    d = run(e, dest=NEW_ACCT)
+    corroborated = d.reason.split("corroborated independently by", 1)[1]
+    assert "sender_domain" not in corroborated, (
+        "the impersonation signal is listed as its own corroboration")
+    assert "urgency" in corroborated
+
+
 # ── V2.1: nothing rejects unattended ─────────────────────────────────
 
 def test_no_rule_path_rejects_unattended():

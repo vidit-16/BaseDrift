@@ -111,13 +111,27 @@ rejection prevents no fraud a hold does not: in both cases the money stays put.
 
   3. any Tier 1 FAIL                            HOLD + recommend reject
 
-  4. REPLACE + new account + a DECEPTION signal + >=1 Tier 2 WARN
+  4. REPLACE + new account + a DECEPTION signal
+                            + >=1 Tier 2 WARN THAT IS NOT THE DECEPTION SIGNAL
                                                 HOLD + recommend reject
      (WARN only — INCONCLUSIVE signals never contribute to a rejection)
 
      A rejection requires evidence that someone is trying to be mistaken for
      the vendor. Contextual signals corroborate that evidence; they cannot
      substitute for it.
+
+     The corroboration must be INDEPENDENT, and for a long time it was not.
+     The condition read "deception and >=1 Tier 2 WARN", but the only signal
+     that sets deception is sender_domain, which is itself a Tier 2 WARN — so
+     the second clause was satisfied by the first and never constrained
+     anything. Deleting Tier 2 from the engine entirely gave numbers identical
+     to deleting R6 alone, which is how it surfaced.
+
+     The audit record was the real casualty: the reason string read
+     "corroborated by 2 contextual risk signal(s) (sender_domain, urgency)",
+     counting the impersonation as its own corroboration, and on 4 of 62 dev
+     firings sender_domain was the only Tier 2 warning at all. An operator
+     reads that sentence before recommending a payment be refused.
 
      This rule previously fired on REPLACE + new account + any 2 Tier 2 WARNs.
      Both of those inputs are true of an ordinary, legitimate bank change: a
@@ -847,8 +861,31 @@ def decide(ext: ExtractionResult,
     # Rule 4 — BEC pattern: sever the old destination, under pressure,
     # from an unverified channel
     deception = [sig for sig in t1 + t2 if sig.deception]
+
+    # THE CORROBORATION HAS TO COME FROM SOMETHING ELSE.
+    #
+    # This used to read `deception and len(t2_warn) >= 1`, which never
+    # constrained anything: the only signal that sets deception is
+    # sender_domain, and sender_domain is itself a Tier 2 WARN — so the second
+    # clause was satisfied by the first. Deleting Tier 2 from the engine
+    # entirely produced identical numbers to deleting R6 alone, which is how it
+    # was found.
+    #
+    # It was not merely redundant, it made the audit record untrue. The reason
+    # string said "corroborated by 2 contextual risk signal(s) (sender_domain,
+    # urgency)", counting the impersonation as its own corroboration, and on 4
+    # of 62 dev firings sender_domain was the ONLY Tier 2 warning — the rule
+    # claimed corroboration where none existed. An operator reads that sentence
+    # before recommending somebody's payment be refused.
+    #
+    # Cost of requiring an independent signal, measured on both splits: R4 fires
+    # 58 instead of 62 on dev and 24 instead of 26 on holdout. Those cases are
+    # still HELD, by R5 or R6; what they lose is the rejection recommendation,
+    # which is exactly the thing that should need corroborating.
+    corroboration = [s for s in t2_warn if not s.deception]
+
     if (ext.action == ACTION_REPLACE and new_account
-            and deception and len(t2_warn) >= 1):
+            and deception and corroboration):
         return Decision(
             outcome=STEP_UP,
             recommended_action="reject",
@@ -857,13 +894,14 @@ def decide(ext: ExtractionResult,
             reason=("Request would REPLACE the existing payout destination with a "
                     "previously unseen account, and carries evidence of deliberate "
                     "impersonation (" +
-                    "; ".join(s.detail for s in deception) + "), corroborated by " +
-                    str(len(t2_warn)) + " contextual risk signal(s) (" +
-                    ", ".join(s.name for s in t2_warn) +
+                    "; ".join(s.detail for s in deception) +
+                    "), corroborated independently by " +
+                    str(len(corroboration)) + " contextual risk signal(s) (" +
+                    ", ".join(s.name for s in corroboration) +
                     "). Every bank-level check may pass; change authorization is absent."),
             triggered_by=(["account_continuity"]
                           + [s.name for s in deception]
-                          + [s.name for s in t2_warn]),
+                          + [s.name for s in corroboration]),
             tier1=t1, tier2=t2,
             checked_destination=dest, destination_source=dest_src,
         )

@@ -171,7 +171,7 @@ COMPLIANCE.md           what production would have to satisfy, and why
                         anonymisation is not available to this design
 NOTES.md                the working log: every v2 item, what it measured, and
                         what it does not show
-tests/                  289 tests across 8 suites, none needing an API key
+tests/                  292 tests across 8 suites, none needing an API key
                         run them all: python tests/run_all.py
 tools/snapshot.py       freezes the dashboard into docs/ as static HTML,
                         so it can be shared without exposing POST routes
@@ -209,7 +209,7 @@ python data/generate_inbox.py   # the AP inbox around those cases
 Everything below this line runs with **no API key**:
 
 ```
-python tests/run_all.py       # 289 tests across 8 suites
+python tests/run_all.py       # 292 tests across 8 suites
 python eval/rules_eval.py     # rule scoring vs baselines
 python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
 python eval/base_rates.py     # daily call volume vs the null baseline
@@ -535,7 +535,23 @@ Matching is now on the concept, and that same case now correctly warns.
 
 ## Known open flaws
 
-**Tier 2 is reachable now, and on this corpus it catches nothing.** Until the
+**R4 claimed corroboration it did not have — fixed.** The BEC rule required
+impersonation evidence *plus* at least one Tier 2 warning to corroborate it. But
+the only signal that sets `deception` is `sender_domain`, and that signal is
+itself a Tier 2 warning — so the second clause was satisfied by the first and
+never constrained anything. Deleting Tier 2 from the engine entirely produced
+numbers identical to deleting R6 alone, which is how it surfaced.
+
+The audit record was the real casualty: the reason string read *"corroborated by
+2 contextual risk signal(s) (sender_domain, urgency)"*, counting the
+impersonation among the things corroborating it, and on 4 of 62 dev firings
+`sender_domain` was the only Tier 2 warning there was. Corroboration must now
+come from a different signal. R4 fires 58 instead of 62 on dev and 24 instead of
+26 on holdout; **recall stays 100%** because those cases are still held, by R5 or
+R6 — what they lose is the rejection recommendation, which is exactly the thing
+that ought to need corroborating.
+
+**Tier 2's other job catches nothing on this corpus.** Until the
 scenarios described under *The held-out result* were added, `R6_contextual_risk`
 and `R7_all_clear` had fired **zero times in 552 cases** — every case was caught
 by an earlier rule, so the four contextual checks and every inbox signal were
@@ -1145,7 +1161,7 @@ to prevent.
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency handling; document correlation; the rules evaluation and the
 ablation; the operator dashboard; the inbox triage funnel and its MCP tool
-layer; the case file and its server-side two-person rule; 289 tests.
+layer; the case file and its server-side two-person rule; 292 tests.
 
 **Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
 vendor lookups that would be API reads. FAV results are replayed
