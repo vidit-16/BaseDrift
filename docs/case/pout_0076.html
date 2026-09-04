@@ -1,0 +1,114 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PayeeProof — pout_0076</title><style>
+:root{
+  --bg:#0f1319; --panel:#161c24; --panel-2:#1c242e; --line:#28323e;
+  --ink:#e7edf4; --dim:#93a1b1; --faint:#667382;
+  --ok:#5fb98a; --warn:#d9a048; --unknown:#7c8ea3; --fail:#e4776f;
+  --accent:#4fbdb4;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1060px;margin:0 auto;padding:28px 22px 80px}
+header{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;
+  border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:24px}
+h1{font-size:19px;margin:0;letter-spacing:-.01em}
+h1 span{color:var(--accent)}
+.sub{color:var(--dim);font-size:13px}
+.spacer{flex:1}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--dim);margin:26px 0 10px;font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--faint);font-weight:600;padding:0 12px 8px 0;white-space:nowrap}
+td{border-top:1px solid var(--line);padding:10px 12px 10px 0;vertical-align:top}
+tr:hover td{background:var(--panel)}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;
+  font-variant-numeric:tabular-nums}
+.pill{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;
+  font-weight:600;padding:2px 8px;border-radius:3px;letter-spacing:.04em;white-space:nowrap}
+.pill.allow{background:#14261c;color:var(--ok);border:1px solid var(--ok)}
+.pill.hold{background:#2a2013;color:var(--warn);border:1px solid var(--warn)}
+.pill.block{background:#2c1817;color:var(--fail);border:1px solid var(--fail)}
+.pill.muted{background:var(--panel-2);color:var(--dim);border:1px solid var(--line)}
+.tag{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;
+  padding:1px 6px;border-radius:2px;border:1px solid var(--line);color:var(--dim)}
+.sig{display:grid;grid-template-columns:80px 170px 1fr;gap:0;
+  border:1px solid var(--line);border-radius:4px;overflow:hidden;margin-bottom:18px}
+.sig>div{padding:9px 12px;border-top:1px solid var(--line);background:var(--panel)}
+.sig>div:nth-child(-n+3){border-top:none;background:var(--panel-2);
+  font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
+.res{font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600}
+.res.ok{color:var(--ok)} .res.warn{color:var(--warn)}
+.res.unknown{color:var(--unknown)} .res.fail{color:var(--fail)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:4px;
+  padding:16px 18px;margin-bottom:18px}
+.kv{display:grid;grid-template-columns:180px 1fr;gap:7px 16px;font-size:13px}
+.kv dt{color:var(--dim)}
+.kv dd{margin:0;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.empty{color:var(--dim);padding:40px 0;text-align:center;border:1px dashed var(--line);
+  border-radius:4px}
+.flag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:10px;
+  margin:2px 4px 2px 0;border:1px solid transparent;white-space:nowrap}
+.flag.warn{background:rgba(217,160,72,.14);color:var(--warn);
+  border-color:rgba(217,160,72,.3)}
+.flag.bad{background:rgba(228,119,111,.14);color:var(--fail);
+  border-color:rgba(228,119,111,.35)}
+.flag{background:var(--panel-2);color:var(--dim);border-color:var(--line)}
+.mail{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
+  padding:16px 18px;white-space:pre-wrap;line-height:1.6;
+  font-size:13.5px;color:var(--ink);overflow-x:auto}
+.mailhead{display:grid;grid-template-columns:88px 1fr;gap:4px 12px;
+  font-size:13px;margin-bottom:12px}
+.mailhead dt{color:var(--faint)}
+.mailhead dd{margin:0;color:var(--ink);font-family:ui-monospace,Menlo,monospace}
+.step{border-left:3px solid var(--accent);padding:10px 14px;margin:12px 0;
+  background:var(--panel-2);border-radius:0 6px 6px 0}
+.demand{border:1px solid var(--accent);border-radius:8px;padding:14px 16px;
+  margin-bottom:14px;background:rgba(79,189,180,.07)}
+.demand.unavailable{border-color:var(--warn);background:rgba(217,160,72,.07)}
+.demand .acct{font-family:ui-monospace,Menlo,monospace;font-size:1.45rem;
+  letter-spacing:.04em;color:var(--ink);margin:6px 0}
+.duties{margin-top:14px;padding:11px 14px;border-left:3px solid var(--warn);
+  background:var(--panel-2);border-radius:0 6px 6px 0;font-size:.9rem;
+  color:var(--dim)}
+.duties strong{color:var(--ink)}
+.statebar{border-left:3px solid var(--accent)}
+.refused{border:1px solid var(--fail);background:rgba(228,119,111,.1);
+  border-radius:6px;padding:12px 16px;margin-bottom:18px;color:var(--ink)}
+.actorpick{display:inline-block;font-size:13px;color:var(--dim);margin-bottom:6px}
+.actorpick select{margin-left:8px;background:var(--panel-2);color:var(--ink);
+  border:1px solid var(--line);border-radius:5px;padding:6px 9px;font:inherit;
+  font-size:13px}
+.bgroup{border-top:1px solid var(--line);padding-top:14px;margin-top:14px}
+.blabel{font-size:11px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--faint);font-weight:600;margin-bottom:6px}
+.btn{font:inherit;font-size:13px;padding:8px 14px;margin:6px 8px 0 0;
+  border-radius:6px;cursor:pointer;background:var(--panel-2);color:var(--ink);
+  border:1px solid var(--line)}
+.btn:hover{border-color:var(--accent)}
+.btn.good{border-color:rgba(95,185,138,.5);color:var(--ok)}
+.btn.good:hover{background:rgba(95,185,138,.12)}
+.btn.danger{border-color:rgba(228,119,111,.5);color:var(--fail)}
+.btn.danger:hover{background:rgba(228,119,111,.12)}
+textarea{width:100%;background:var(--panel-2);color:var(--ink);font:inherit;
+  font-size:13px;border:1px solid var(--line);border-radius:6px;padding:9px 11px;
+  resize:vertical}
+.hist{display:grid;grid-template-columns:150px 1fr;gap:12px 16px;font-size:13px}
+.hwhen{color:var(--faint);font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.mrow{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:baseline}
+.msub{color:var(--faint);font-size:.82rem}
+.drop{opacity:.62}
+.note{color:var(--faint);font-size:12px;margin-top:6px}
+.reason{color:var(--dim);font-size:12.5px;margin-top:4px;max-width:80ch}
+code{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--dim)}
+
+.snapshot-note{border:1px solid var(--accent);background:rgba(79,189,180,.08);
+  border-radius:6px;padding:12px 16px;margin-bottom:18px;font-size:13px;
+  color:var(--dim)}
+.snapshot-note strong{color:var(--ink)}
+.snapshot-note code{color:var(--accent)}
+form[data-inert] .btn,form[data-inert] select,form[data-inert] textarea{
+  opacity:.55;cursor:not-allowed}
+</style></head><body><div class="wrap"><div class="snapshot-note"><strong>Static snapshot.</strong> A frozen copy of the operator dashboard, safe to open anywhere. The buttons below are drawn but inert — recording a verification and being refused the release is a state change, so it runs on the live app: <code>python src/demo.py --serve</code>.</div><header><h1>Payee<span>Proof</span></h1><div class="sub">payout pout_0076</div><div class="spacer"></div><a href="../inbox.html">Inbox</a> · <a href="../index.html">← All decisions</a></header><div class="card"><div style="margin-bottom:10px"><span class="pill allow" title="ALLOW">Released</span> </div><div><strong>Routine payment — nothing was being changed</strong><div class="note mono">R2a_no_change_confirmed</div></div><div class="reason" title="Semantic layer read this as a payment follow-up, and the payout destination is confirmed unchanged against the vendor master. 162599984852 (payout fund account) is a known account for this vendor">Semantic layer read this as a payment follow-up, and the payout destination is confirmed unchanged against the vendor master. 162599984852 (payout fund account) is a known account for this vendor</div></div><h2>Verification — what would release this</h2><div class="card"><div class="demand"><div class="note">Ask the supplier to send Rs 1 from this account, and no other:</div><div class="acct">162599984852</div><div class="note">chosen because 162599984852: 47 settled payout(s), added 2023-02-04 via onboarding, verified by onboarding_kyc</div></div><div class="duties"><strong>Two people, not one.</strong> Whoever records the verification outcome must not be whoever releases the payment. A compromised or complicit AP clerk who can do both approves their own request, and the control is theatre. This is enforced when the button is pressed, not only drawn on the screen.</div></div><h2>What was checked</h2><div class="card"><dl class="kv"><dt>Supplier</dt><dd>VEND0036</dd><dt>Destination account</dt><dd>162599984852</dd><dt>Destination came from</dt><dd>The payout itself — the payout&#x27;s own fund account, never the email [razorpay_fund_account]</dd><dt>Fund account</dt><dd>fa_0076</dd><dt>Amount</dt><dd>Rs 310,000.00</dd><dt>Change request</dt><dd>doc_1890195570094037</dd><dt>Correlated by</dt><dd>Named on the payout [explicit_note]</dd><dt>Evidence source</dt><dd>Replayed perfect extraction [replayed_perfect_extraction]</dd><dt>Semantic reading</dt><dd>PAYMENT_FOLLOWUP / NONE / NONE</dd></dl></div><h2>Accounts on file for this supplier</h2><div class="card"><table><thead><tr><th>Account</th><th>Added</th><th>Verified</th><th>Settled</th><th></th></tr></thead><tbody><tr><td class="mono">162599984852<div class="note">ICIC0207105 · active</div></td><td>At onboarding<div class="note">2023-02-04</div></td><td>Verified at onboarding (KYC)</td><td class="mono">47<div class="note">payouts</div></td><td><span class="flag warn">This payment</span><span class="flag">Primary</span></td></tr></tbody></table></div><h2>Identity checks — against your supplier records</h2><div class="sig"><div>result</div><div>check</div><div>finding</div><div class="ok" title="PASS">OK</div><div><strong>Destination account</strong> <div class="note mono">account_continuity</div></div><div>162599984852 (payout fund account) is a known account for this vendor<div class="note">from Payout, against our records</div></div></div><h2>What this maps to at RazorpayX</h2><div class="card"><div class="mono">POST /v1/payouts/pout_0076/approve <div class="note">payout released from pending</div></div><p class="note">Action plans. Nothing in this repository calls Razorpay.</p></div></div></body></html>

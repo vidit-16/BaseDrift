@@ -1109,7 +1109,7 @@ def _demo_store():
               encoding="utf-8") as f:
         rows = list(_csv.DictReader(f))
     rows.sort(key=lambda r: float(r["received_at"]), reverse=True)
-    rows = rows[:220]
+    rows = rows[:demo.INBOX_MESSAGES]
     for r in rows:
         store.ingest_message(_T.Message(
             message_id=r["message_id"], from_addr=r["from_addr"],

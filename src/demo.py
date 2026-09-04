@@ -45,6 +45,16 @@ from mcp import inbox_server as MCP  # noqa: E402
 
 DATA = os.path.join(ROOT, "data")
 SECRET = "whsec_demo"
+
+# One day's inbound at the merchant's stated volume, rather than a fixed 220.
+# When the mailbox was 7.7% change requests, 220 messages held plenty to look
+# at; at a realistic 2.4% the same slice holds about one fraudulent request,
+# which makes the queue honest and the demo empty. A day's worth keeps both.
+#
+# A module constant because tests/test_webhook.py builds the same store to
+# check the replayed queue, and the two silently drifted apart the first time
+# this number moved.
+INBOX_MESSAGES = 500
 CASE_ID = "CASE00593"
 W_COL = 74
 
@@ -349,7 +359,7 @@ def serve(store):
               encoding="utf-8") as f:
         rows = list(_csv.DictReader(f))
     rows.sort(key=lambda r: float(r["received_at"]), reverse=True)
-    for r in rows[:220]:
+    for r in rows[:INBOX_MESSAGES]:
         store.ingest_message(_T.Message(
             message_id=r["message_id"], from_addr=r["from_addr"],
             subject=r["subject"], body=r["body"], thread_id=r["thread_id"],

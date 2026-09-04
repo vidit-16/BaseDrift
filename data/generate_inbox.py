@@ -54,9 +54,19 @@ import render as R  # noqa: E402
 SEED = 20260829
 AS_OF_EPOCH = 1782777600.0        # 2026-06-30T00:00:00Z, matching generate_data
 
-# Roughly 12 noise messages per genuine change request. At 40 change requests a
-# day that is ~500 inbound, which is the merchant's stated volume.
-NOISE_PER_CASE = 12
+# Noise messages per genuine change request.
+#
+# WAS 12, WHICH MADE THE MAILBOX 7.7% BANK-CHANGE REQUESTS. No accounts-payable
+# inbox looks like that. It also put fraud at 11.3% of everything triage routed
+# for review, and a queue where one message in nine is an attack trains an
+# operator to expect attacks — the opposite of the vigilance problem this system
+# is built for, where fraud is rare enough to be forgotten about.
+#
+# At 40 the mailbox is ~2.4% change requests and fraud is ~1% of it. The review
+# queue stays about the same SIZE, because it is dominated either way by
+# ordinary mail that happens to quote an account number — which is the honest
+# picture of what triage does, and the reason stage 3 exists at all.
+NOISE_PER_CASE = 40
 
 
 # ── Noise bodies. Several quote account numbers on purpose. ───────────
