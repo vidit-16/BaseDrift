@@ -794,7 +794,7 @@ That is not luck, it is the architecture doing what it was built to do. Identity
 never comes from the extracted claims — the destination is read from the payout's
 own fund account — so a misread account number cannot move a decision. And the
 signals the model *does* miss are corroborating ones: channel manipulation at
-72.3% recall can downgrade a rejection recommendation to a plain hold, never a
+85.8% recall can downgrade a rejection recommendation to a plain hold, never a
 hold to a release.
 
 **The weakest narrative was `legit_add_account`, and it is fixed.** It scored
