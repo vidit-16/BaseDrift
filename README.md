@@ -8,6 +8,42 @@ PayeeProof is a pre-authorization decision layer for RazorpayX payouts. It inter
 
 Razorpay AI Buildathon — Track 2 (AI Risk Manager).
 
+**[Architecture](ARCHITECTURE.md)** · **[Build log — what broke and how](NOTES.md)** · **[What production would require](COMPLIANCE.md)**
+
+---
+
+## At a glance
+
+**Held out, 278 cases, scored once:** recall 100%, precision 87.7%, **false
+rejections 0.0%**, false holds 13.4% — reported beside a null baseline of
+100% / 86.1% / 0.0% / 15.5%, because a pipeline that holds everything and phones
+every vendor scores 100% on this data and accuracy alone cannot tell the two
+apart.
+
+**The corpus can fail, and it has.** Adding the planted-account exploitation
+scenario dropped recall to **93.8%** before a rule closed it. Recall of 100% on
+a corpus that cannot fail is a ceiling, not a result.
+
+**303 tests, and mutation testing proves they bite.** Twelve targeted mutations
+of stated invariants — the two-person rule, tier separation, fail-safe by
+inaction — all killed. Two survivors were the finding: R4 claimed corroboration
+it did not have, and a compound guard where either clause could be deleted with
+the suite still green.
+
+**It is a control, not just a detector.** Whoever records a verification outcome
+cannot release the payment, enforced on the POST rather than by grey-ing out a
+button. A clerk who can do both approves their own request.
+
+**Two false-positive costs, not one.** A rejected vendor and a phoned vendor are
+different events; collapsing them hides which you are causing.
+
+**Honest gaps, quantified:** the corpus is synthetic with fraud oversampled to
+~49% ([base_rates.py](eval/base_rates.py) converts the rates to real volumes);
+Tier 2 catches nothing measurable here and is kept as defence in depth; there is
+no authentication anywhere; and the integration point is **confirmed
+un-exercisable** in Razorpay's sandbox — their docs state the `pending` state
+does not exist in test mode.
+
 ---
 
 ## The gap, in Razorpay's own words
