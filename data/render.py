@@ -166,12 +166,46 @@ TIME_PRESSURE = [
     "We are past terms on this one now, so anything you can do today helps.",
 ]
 
+# Channel manipulation: the conversation is steered somewhere FEWER people can
+# see. Three of these existed and all three used "rather than", so any detector
+# only had to recognise one connective to score perfectly. The rest carry the
+# same move under different grammar.
 CHANNEL_REDIRECT = [
     "Please reply on this thread rather than the old chain.",
     "Do write back to me here — I am handling this account now rather than the "
     "shared inbox.",
     "Easiest to keep this thread going with me directly, rather than the "
     "shared inbox which is not monitored closely.",
+    "Going forward please use my direct line and not the accounts desk.",
+    "No need to copy the group on this one — just me is fine.",
+    "Our shared mailbox is being wound down, so send everything to me from "
+    "now on.",
+]
+# NOTE ON HOW MUCH VARIETY IS POSSIBLE HERE. The leakage guard bans "instead
+# of", "no longer" and "stop using" outright — they are keyword-baseline
+# triggers — so the corpus cannot exercise a detector against them however
+# natural they are in real mail. Any recall figure below is therefore measured
+# against the connectives that survive that filter, and says nothing about the
+# ones it forbids.
+
+# CONTROLS, and the reason this corpus can now measure anything here at all.
+#
+# Every one of these talks about replies, threads, inboxes and where to write —
+# the same vocabulary as the block above — while doing the OPPOSITE thing:
+# widening who can see the exchange, or keeping it where it already was. Two of
+# them displace a channel explicitly, which is the shape that separates a
+# detector reading DIRECTION from one pattern-matching on "rather than".
+#
+# Before these existed, no message in the corpus without channel_manipulation
+# contained so much as one half of the pattern, so precision was unmeasurable
+# and a regex matching the three templates above scored 100/100. See NOTES V2.O.
+CHANNEL_BENIGN = [
+    "Do reply to all on this one so procurement stays in the loop.",
+    "Copying our shared inbox as well, in case I am away when this lands.",
+    "Happy to keep this on the existing thread rather than starting a new one.",
+    "Please use the shared mailbox rather than writing to me directly — I am "
+    "on leave from Thursday.",
+    "Replying here rather than by phone so there is a written record.",
 ]
 
 GSTIN_PLAIN = ["Our GST registration is {gstin}."]
@@ -226,6 +260,20 @@ class RenderedCase:
         }
         row.update({f"expected_{k}": v for k, v in self.expected.items()})
         return row
+
+
+def _stable_bool(case_id: str, field: str, probability: float) -> bool:
+    """
+    A per-case coin flip that does NOT touch the case's rng stream.
+
+    Drawing from `rng` here would shift every subsequent choice in that email —
+    a different greeting, a different framing, a different amount line — so a
+    change meant to add one sentence would rewrite the whole corpus. Hashing
+    the case id keeps existing text where it is. generate_data.py does the same
+    thing for the same reason.
+    """
+    h = hashlib.sha256(f"{case_id}:{field}".encode()).hexdigest()
+    return (int(h[:8], 16) % 10_000) < probability * 10_000
 
 
 def _seed_for(case_id: str) -> int:
@@ -289,6 +337,12 @@ def render_case(row: Dict[str, str], vendor: Dict[str, str]) -> RenderedCase:
         parts.append(rng.choice(TIME_PRESSURE))
     if row["channel_manipulation"] == "True":
         parts.append(rng.choice(CHANNEL_REDIRECT))
+    elif _stable_bool(row["case_id"], "channel_benign", 0.25):
+        # Ordinary mail that talks about replies and inboxes without steering
+        # anything. Picked by hash rather than by rng so the rest of this email
+        # is unchanged, and so the same cases carry a control on every run.
+        parts.append(CHANNEL_BENIGN[
+            _seed_for(row["case_id"]) % len(CHANNEL_BENIGN)])
 
     parts += ["", rng.choice(SIGNOFFS),
               f"{rng.choice(SENDER_NAMES)}", vendor["legal_name"]]

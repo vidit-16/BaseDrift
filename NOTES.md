@@ -1943,6 +1943,82 @@ V2.N  THE GSTIN "DROP" WAS NOISE, THE AMBIGUITY UNDER IT WAS REAL, AND THE
       caught.
 
 
+V2.O  A MEASUREMENT WITH NO NEGATIVES IN IT CANNOT EVALUATE PRECISION, AND I
+      USED ONE TO DELETE THE FIX
+
+      The third variant of the same error, after ablation corpus v1 and the
+      prompt that quoted render.py. Recorded at length because it cost most of
+      a day and the mechanism is not obvious from either of the first two.
+
+      THE SEQUENCE.
+      Channel-manipulation recall sat at 61-72%. A rewritten definition —
+      "judge by who can watch the conversation afterwards" — was measured over
+      two runs of 40 cases, moved recall 73.8 -> 75.0%, and was REVERTED for
+      doing nothing.
+
+      It was not a recall fix. It was a precision fix. And at that moment the
+      corpus contained ZERO messages that mentioned replies, threads or inboxes
+      without also being channel manipulation, so precision was pinned at 100%
+      for every possible detector and the measurement could not see what the
+      change did. A precision fix was rejected by an instrument with no
+      precision resolution, and the resulting 80.3% was then quoted back as
+      evidence that ~80% was near a ceiling.
+
+      WHAT MADE IT VISIBLE. Controls: ordinary mail using the same vocabulary
+      while doing the opposite thing. Adding 5 of them, at 25% of non-channel
+      cases, immediately showed:
+
+        - a hand-written regex pre-read scoring 100/100 fell to 100% precision
+          and 43% recall, because it had been matching one template family
+        - the MODEL's precision fell from "100%" to 80.3%, because it had never
+          had an opportunity to be wrong
+
+      Both detectors had been flattered by a corpus that could not fail them.
+
+      THE PART THAT MATTERED MOST, and it came from LOOKING at the failures
+      rather than counting them. All 13 model false positives traced to exactly
+      two control templates, and both satisfy the SHIPPED definition —
+      "redirects communication away from an existing channel" — literally.
+      Directing somebody to a shared mailbox redirects away from writing to an
+      individual. Moving from phone to email redirects away from phone. The
+      model was following its instructions; the labels encoded a different rule
+      than the prompt stated.
+
+      So the corpus and the prompt disagreed, and the deleted rewrite was the
+      thing that made them agree.
+
+      MEASURED, on six adversarial controls plus the six real templates:
+
+        shipped definition       4 false positives / 6,  recall 4/6
+        directional definition   1 false positive  / 6,  recall 5/6
+
+      Better on BOTH axes. No new layer: the regex pre-read built to rescue this
+      signal is unnecessary and was dropped.
+
+      THE ONE STILL WRONG: "Their team asked us to reply to them directly rather
+      than the group inbox." Both versions call it manipulation. The sender is
+      relaying an instruction they received, and whether that counts depends on
+      whose payments are at stake. Left wrong and documented rather than tuned
+      against, since it is one hand-written sentence.
+
+      THREE RULES OUT OF THIS:
+
+        1  Before trusting any precision figure, check the corpus contains
+           negatives that could plausibly be misclassified. If nothing can be
+           wrong, nothing has been measured.
+        2  A change measured on the wrong axis has not been measured. "It did
+           not improve recall" is not a reason to delete a precision fix.
+        3  Look at the failures, not the count. Thirteen false positives from
+           two templates is a different problem from thirteen scattered ones,
+           and the aggregate cannot tell you which you have.
+
+      R4 SIDE-CHECK, since channel manipulation became an independent
+      corroborator in V2.M: no R4 firing on the holdout rests solely on a false
+      channel warn. Two firings name one in the reason string while having other
+      genuine corroboration — an audit-accuracy defect, not a decision one, and
+      the directional definition removes both at source.
+
+
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES
 
       (2.1 and 2.5 are DONE — Phase 1. 2.S is the schema decided in Phase 2.)

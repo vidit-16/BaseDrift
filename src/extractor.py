@@ -220,7 +220,14 @@ EXTRACTION RULES
 - amount: resolve shorthand — "Rs 3 lakh" -> 300000, "28k" -> 28000
 - urgency_detected: true even when urgency is implied rather than stated (e.g. "month-end closing is tomorrow")
 - hedging_detected: true if a claim is qualified ("should be", "I think", "same as before")
-- channel_manipulation_detected: true if the sender redirects communication away from an existing channel"""
+- channel_manipulation_detected: true only when the sender narrows WHO CAN
+  SEE the exchange — steering it to themselves personally, or off a mailbox
+  others read. Widening it is not manipulation: directing you TO a shared or
+  monitored mailbox, or onto a written record, is the opposite move even
+  though it also changes channel. Judge only the sender own payment
+  correspondence: someone else arrangements, a practice being described
+  rather than requested, and instructions about an unrelated matter are all
+  false."""
 
 # Which prompt produced a reading is part of the reading. Two runs months
 # apart are not comparable if the prompt changed between them, and a payment

@@ -772,8 +772,8 @@ changes right and all 115 follow-ups wrong.)
 | account · IFSC · GSTIN | **100% · 100% · 100%** | **100% · 100% · 100%** |
 | amount | 100% | 100% |
 | sender domain | 97.3% | 96.0% |
-| urgency (precision / recall) | 89.1% / 100% | 84.4% / 100% |
-| channel manipulation | 100% / **71.6%** | 100% / **61.0%** |
+| urgency (precision / recall) | 88.3% / 100% | 84.4% / 100% |
+| channel manipulation | **100% / 85.8%** | **100% / 88.3%** |
 | extraction failed | **0.0%** | **0.0%** |
 
 Every semantic field and every claim except sender domain is exact on all 900
@@ -788,7 +788,7 @@ documents, with no extraction failures on either split.
 | holdout — rules-only reference | 100% | 87.7% | 0.0% | — |
 | **holdout — with real extraction** | **100%** | **87.7%** | **0.0%** | **99.3%** |
 
-Prompt `7312811f5ddf`, renderer 2.0.0, 900 documents extracted, 0 failures.
+Prompt `c66b58612fe7`, renderer 2.0.0, 900 documents extracted, 0 failures.
 
 That is not luck, it is the architecture doing what it was built to do. Identity
 never comes from the extracted claims — the destination is read from the payout's
@@ -830,16 +830,24 @@ returns `accounts@vendor.com` where a registrable domain was asked for. It is
 corrected before the domain reaches `check_domain`, so it costs nothing, and the
 raw recovery number is reported rather than the post-normalisation one.
 
-**Channel manipulation recall is 61–72%, and an attempt to improve it failed.**
-69 of 72 misses have a redirect phrase sitting in the email, so the model is
-looking at it and not seeing it — a real weakness, not a corpus artifact. A
-rewritten definition, measured over two runs on 40 cases, moved it 73.8% → 75.0%
-— half a case, well inside the old wording's own [30, 29] spread. That change was
-**reverted rather than kept**: shipping prompt text measured to do nothing is the
-same "survives by being unmeasured" pattern this project keeps finding in itself,
-and worse here, because the measurement exists. Since R4's corroboration became
-independent, this signal now genuinely affects decisions, so it is the open item
-worth a different approach rather than better wording.
+**Channel manipulation was the weak field, and fixing it took correcting the
+measurement first.** It sat at ~80% precision and ~68% recall. The corpus
+contained no message that used reply/thread/inbox language *without* being
+manipulation, so precision was pinned at 100% for every possible detector and
+nothing could be evaluated. Adding controls — ordinary mail using the same
+vocabulary while widening who can see the exchange — dropped the model to 80.3%
+and showed all 13 false positives came from two templates.
+
+Both of those satisfy the old definition, "redirects communication away from an
+existing channel", *literally*: directing you to a shared mailbox redirects away
+from writing to an individual. The model was following its instruction; the
+labels encoded a different rule. The definition now asks **which direction
+visibility moves**, and scopes the question to the sender's own payment
+correspondence.
+
+Result: **100% precision on all 900 documents, recall 85.8% / 88.3%** — better on
+both axes, and it restored `real == ideal` end to end, which those false
+positives had broken.
 
 Caveats that travel with these numbers: one run per split, one model. The
 extractor is not reproducible run to run — GSTIN recovery swung 13 points
