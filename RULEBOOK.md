@@ -326,8 +326,9 @@ Oldest qualifying account wins. When none qualifies, that is a third state —
 ```
 VERIFICATION — WHAT WOULD RELEASE THIS
   Ask the supplier to send Rs 1 from this account, and no other:
-      772180771036
-  chosen because 19 settled payouts, added 2024-03-28 via onboarding
+      926841336891
+  chosen because 43 settled payout(s), added 2024-12-29 via onboarding,
+  verified by onboarding_kyc
 ```
 
 ### What the outcomes mean

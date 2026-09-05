@@ -34,10 +34,11 @@ python tools/mutate.py --list
 **Check before you start:** browser zoom at 125% or more. Dashboard text is
 small and the compression will eat it.
 
-**And read the number off the screen, not off this page.** The demo loads a
-500-message slice (`INBOX_MESSAGES` in `src/demo.py`); the full corpus is
-25,584. The script says both, in that order, so what you say matches what a
-viewer can see. If you change the constant, change the line.
+**Read the numbers off the screen, not off this page.** The inbox header shows
+`501 messages · 130 need review · 3 waiting on you`, and the script quotes those
+three figures so your voice matches the pixels. They come from a 500-message
+slice (`INBOX_MESSAGES` in `src/demo.py`) of a 25,584-message corpus — if you
+change that constant, change the line.
 
 ---
 
@@ -127,9 +128,10 @@ no change — the baseline flags all four. The model flags none.
 
 > **SCREEN:** Live dashboard. Slow down here.
 
-This is the operator's view — the mailbox as triage saw it. This is a
-five-hundred-message slice of a twenty-five thousand message corpus, funnelled
-down to the ones that actually touch a payment destination.
+This is the operator's view — the mailbox as triage saw it. Five hundred and
+one messages, a hundred and thirty of them needing review, three waiting on a
+person right now. Triage matched every sender against the supplier records with
+no model call at all; only what survived that gets read in full.
 
 > **CLICK:** a flagged message → its case.
 
@@ -141,20 +143,31 @@ first inherits its conclusion.
 > **POINT AT:** the verification panel.
 
 And a hold isn't a dead end. It names what would release it — not "verify the
-vendor," but **this specific account**, chosen because it has nineteen settled
-payouts and was added at onboarding. "Prove you control an account on file"
-would let an attacker use one they planted.
+vendor," but **this specific account**, chosen because it has forty-three
+settled payouts and was verified at onboarding. "Prove you control an account
+on file" would let an attacker use one they planted.
 
-> **CLICK:** release, as the same person who recorded the verification.
+> **DO THIS, in order — it does not work if you skip the first step.**
+> The case starts with nothing recorded, so releasing straight away gets you
+> *"Nothing is verified yet"*, which is the wrong refusal for this point.
+>
+> 1. **Acting as → Priya Menon**, then click **Supplier confirmed the change**.
+> 2. Leave *Acting as* on **Priya Menon** and click **Release the payment**.
 
-Now — I recorded the verification on this case, so watch what happens when I try
-to release it.
+So I've just recorded the verification myself. Now watch what happens when I
+try to release the same payment.
 
-> **SCREEN:** the refusal message.
+> **SCREEN:** the refusal. It reads, verbatim:
+> *"You recorded the verification on this case, so you cannot also release it.
+> A different person must."*
 
 Refused, server-side. Whoever verifies cannot release. That's not a greyed-out
 button, it's a refusal on the POST — a control that only lives in the UI isn't a
 control.
+
+> **OPTIONAL, if you have the time:** switch *Acting as* to **Rahul Iyer** and
+> release. It goes through. That contrast is what makes the point land — it is a
+> segregation rule, not a broken button.
 
 ---
 
@@ -232,9 +245,10 @@ densest and least visual thing you say. Keep it moving.
 
 **If you overrun**, cut in this order:
 
-1. The corpus-bug finding at 3:55 — the other two are stronger.
-2. The Reverse Penny Drop sentence at 0:55.
-3. The "email comes first on the page" aside at 2:45.
+1. The optional "release as Rahul" contrast at the end of the demo.
+2. The corpus-bug finding at 3:55 — the other two findings are stronger.
+3. The Reverse Penny Drop sentence at 0:55.
+4. The "email comes first on the page" aside at 2:45.
 
 Do **not** cut the mutation testing or the "ceiling, not a result" line. The
 first is the strongest evidence of rigour and the second is the credibility of
