@@ -2,8 +2,8 @@
 
 **Everything: what is on screen, what you click, where you point, what you say.**
 
-Spoken content is ~640 words → **4:16** at an unhurried pace. Clicking and two
-deliberate pauses add ~35s. **Total 4:51** against a five-minute limit.
+Spoken content is ~645 words → **4:18** at an unhurried pace. Clicking and two
+deliberate pauses add ~35s. **Total 4:53** against a five-minute limit.
 
 ```bash
 python tools/script_time.py
@@ -56,7 +56,7 @@ python tools/mutate.py --list
 
 ---
 
-## 0:00 — 0:30 · The problem
+## 0:00 — 0:28 · The problem
 
 **ON SCREEN** You, or a plain title card. No dashboard yet.
 
@@ -75,7 +75,7 @@ python tools/mutate.py --list
 
 ---
 
-## 0:30 — 0:56 · Why the existing controls don't close it
+## 0:28 — 0:57 · Why the existing controls don't close it
 
 **ON SCREEN** Tab 5 — GitHub README, the control comparison table.
 
@@ -96,7 +96,7 @@ python tools/mutate.py --list
 
 ---
 
-## 0:56 — 1:18 · What I built
+## 0:57 — 1:18 · What I built
 
 **ON SCREEN** Tab 5 — scroll up to the **architecture diagram**.
 
@@ -113,7 +113,7 @@ python tools/mutate.py --list
 
 ---
 
-## 1:18 — 2:12 · The decision that shapes everything
+## 1:18 — 2:10 · The decision that shapes everything
 
 **ON SCREEN** Tab 5 — diagram, then scroll to **The ablation result** table.
 
@@ -143,9 +143,9 @@ python tools/mutate.py --list
 
 ---
 
-## 2:12 — 3:12 · The demo
+## 2:10 — 3:12 · The demo
 
-### 2:12 · the mailbox
+### 2:10 · the mailbox
 
 **ON SCREEN** Tab 1 — `/inbox`
 
@@ -157,7 +157,7 @@ python tools/mutate.py --list
 > review — triage matched every sender against the supplier records, no model
 > call.
 
-### 2:24 · the message
+### 2:22 · the message
 
 **DO** Click the row **INV-4819 — accounts@novasystems.com**.
 
@@ -173,18 +173,17 @@ python tools/mutate.py --list
 > are named. There's the deadline. And there's the request to keep it off the
 > phone. No trigger words anywhere.
 
-### 2:44 · the decision queue
+### 2:42 · the decision queue
 
 **DO** Click **Open the decision →**, then **← All decisions**.
 
 **POINT AT** the header: `133 decisions · 5 not released · 1 recommended for rejection`,
 then the **pout_mule** row tagged `RECOMMEND REJECT`.
 
-**SAY**
+**SAY** nothing — walk through it while the previous line lands. The header
+does the work: five held, exactly one carrying a rejection recommendation.
 
-> Five held. Exactly one carries a rejection recommendation.
-
-### 2:56 · the control
+### 2:52 · the control
 
 **DO** Click **pout_0073**. Scroll to **Verification — what would release this**.
 
@@ -217,7 +216,7 @@ case, so you cannot also release it. A different person must."*
 
 ---
 
-## 3:12 — 4:02 · What broke
+## 3:12 — 3:48 · What broke
 
 **ON SCREEN** Tab 5 — navigate to **FINDINGS.md**.
 
@@ -227,10 +226,6 @@ case, so you cannot also release it. A different person must."*
 > moment the extractor said "nothing is changing" — before any identity check
 > ran. Unseen account, bank reporting it inactive, name match of three. Still
 > ALLOW.
->
-> A rejection rule corroborated itself — the only signal setting impersonation
-> was also the warning meant to corroborate it. The second condition was
-> satisfied by the first.
 
 **DO** Switch to terminal 2. Run `python tools/mutate.py --list`.
 
@@ -244,7 +239,7 @@ case, so you cannot also release it. A different person must."*
 
 ---
 
-## 4:02 — 4:35 · What the numbers say, and don't
+## 3:48 — 4:40 · What the numbers say, and don't
 
 **ON SCREEN** Tab 5 — README, **At a glance** results table.
 
@@ -264,13 +259,20 @@ case, so you cannot also release it. A different person must."*
 >
 > And a hundred percent recall is a ceiling, not a result. It means my corpus
 > can't fail, not that the system can't.
+>
+> Nothing here calls Razorpay, either. The pending state doesn't exist in test
+> mode, so the event this is built around can't fire in a sandbox. And it
+> protects vendors you've already onboarded — onboarding fraud is a different
+> problem.
 
-**Delivery:** do not rush this. Volunteering the baseline is the most
-credible thing in the video.
+**Delivery:** do not rush this. Volunteering the baseline, the ceiling and the
+missing integration in one breath is the most credible thirty seconds in the
+video. A reviewer who finds any of the three for themselves afterwards
+discounts everything else you said.
 
 ---
 
-## 4:35 — 4:50 · Close
+## 4:40 — 4:57 · Close
 
 **ON SCREEN** Back to you, or the title card.
 
@@ -295,13 +297,16 @@ reload.
 
 **You overrun.** Cut in this order:
 
-1. The decision-queue beat at 2:44 — go straight from the message to the case
-2. The `sender_domain` detail in the corroboration finding at 3:30
-3. The second "what broke" finding entirely — keep the first and the mutations
+1. The decision-queue navigation at 2:42 — go straight from the message to
+   the case
+2. *"Unseen account, bank reporting it inactive, name match of three"* at 3:14
+   — the finding survives without the detail
+3. The scope sentence at 4:32 (*"onboarding fraud is a different problem"*) —
+   the Razorpay sentence before it matters more
 
-Never cut the mutation testing or *"ceiling, not a result"*. The first is the
-strongest evidence of rigour; the second is the credibility of everything
-before it.
+Never cut the mutation testing, *"ceiling, not a result"*, or *"nothing here
+calls Razorpay"*. The first is the strongest evidence of rigour; the other two
+are the credibility of everything else you said.
 
 ---
 
