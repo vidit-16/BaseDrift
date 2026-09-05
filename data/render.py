@@ -1,5 +1,5 @@
 """
-PayeeProof — case to email renderer.
+BaseDrift — case to email renderer.
 
 Turns a feature row from generate_data.py into the message a finance team would
 actually have received, so the real extractor can be measured end to end.

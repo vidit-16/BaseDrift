@@ -1,5 +1,5 @@
 """
-PayeeProof — investigator.py
+BaseDrift — investigator.py
 
 The only genuine agent loop in the system, and the smallest thing in it.
 

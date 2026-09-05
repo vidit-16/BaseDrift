@@ -1,5 +1,5 @@
 """
-PayeeProof — webhook handler tests.
+BaseDrift — webhook handler tests.
 
 Two halves:
 
@@ -382,7 +382,7 @@ def test_inbox_evidence_reaches_the_decision_engine():
         amount=28000.0)
     try:
         r = post(store, event_body(
-            notes={"payeeproof_document_id": out["document_id"]}))
+            notes={"basedrift_document_id": out["document_id"]}))
     finally:
         E.extract = real
     names = [s["name"] for s in r.audit["decision"]["tier2"]]
@@ -427,7 +427,7 @@ def test_a_payout_decides_normally_with_no_inbox_connected():
         received_at=1000.0))
     assert out["verdict"] == T.ROUTE
     assert out["inbox_signals"] == []
-    r = post(store, event_body(notes={"payeeproof_document_id": out["document_id"]}))
+    r = post(store, event_body(notes={"basedrift_document_id": out["document_id"]}))
     assert r.audit["payout_allowed"] is False
     assert r.audit["decision"]["rule_fired"]
     assert r.audit["decision"]["tier2"] is not None
@@ -462,7 +462,7 @@ def test_destination_comes_from_the_payout_not_the_document():
     store = make_store(dest_account=NEW_ACCT)
     store.put_document("doc_1", VENDOR.vendor_id,
                        f"Please pay to our usual account {KNOWN_ACCT}.")
-    r = post(store, event_body(notes={"payeeproof_document_id": "doc_1"}))
+    r = post(store, event_body(notes={"basedrift_document_id": "doc_1"}))
     assert r.audit["destination"]["account_number"] == NEW_ACCT
     assert r.audit["destination"]["source"] == "razorpay_fund_account"
     assert r.audit["payout_allowed"] is False
@@ -471,7 +471,7 @@ def test_destination_comes_from_the_payout_not_the_document():
 def test_explicit_note_correlates_the_document():
     store = make_store(dest_account=KNOWN_ACCT)
     store.put_document("doc_9", VENDOR.vendor_id, "Chasing INV-4471, no changes.")
-    r = post(store, event_body(notes={"payeeproof_document_id": "doc_9"}))
+    r = post(store, event_body(notes={"basedrift_document_id": "doc_9"}))
     assert r.audit["document"]["document_id"] == "doc_9"
     assert r.audit["document"]["correlation"] == "explicit_note"
 
@@ -483,7 +483,7 @@ def test_document_belonging_to_another_vendor_is_not_used():
     """
     store = make_store(dest_account=KNOWN_ACCT)
     store.put_document("doc_x", OTHER_VENDOR.vendor_id, "unrelated")
-    r = post(store, event_body(notes={"payeeproof_document_id": "doc_x"}))
+    r = post(store, event_body(notes={"basedrift_document_id": "doc_x"}))
     assert r.audit["document"]["document_id"] is None
     assert r.audit["document"]["correlation"] == "none_found"
 
@@ -1123,7 +1123,7 @@ def _demo_store():
 def test_the_replayed_queue_gives_every_routed_message_a_decision():
     """
     The demo used to show 70 routed messages and three payout decisions, only
-    one of which any message could reach. The model was right — PayeeProof
+    one of which any message could reach. The model was right — BaseDrift
     decides when money moves, not when mail arrives — but a queue where 69 of
     70 rows say "awaiting payment" teaches nobody anything, and the first
     question a viewer asks is why the others cannot be opened.

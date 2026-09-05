@@ -1,5 +1,5 @@
 """
-PayeeProof — decision_engine.py
+BaseDrift — decision_engine.py
 
 Turns extraction output + FAV result + vendor master into a Decision.
 No LLM here. Every rule below is explicit and traceable.

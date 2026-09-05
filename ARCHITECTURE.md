@@ -1,4 +1,4 @@
-# PayeeProof — Architecture
+# BaseDrift — Architecture
 
 *Razorpay AI Buildathon 2026 · Track 02, AI Risk Manager*
 
@@ -30,7 +30,7 @@ customer" — a field the requester controls. A finance team that trusts a spoof
 email feeds the attacker's preferred name into the check themselves, and it
 comes back green.
 
-**PayeeProof verifies authorization provenance: did this vendor, through a
+**BaseDrift verifies authorization provenance: did this vendor, through a
 channel they do not control, ask for this?**
 
 ---
@@ -72,7 +72,7 @@ The interception point is deliberate. At `payout.pending` the payout exists, is
 frozen, and no money has moved — the only moment where prevention is possible
 without asking the merchant to change their payout code. It also survives a
 bypass Razorpay documents itself: Approval Workflow can be disabled for API
-payouts, at which point pending payouts are auto-processed. PayeeProof runs at
+payouts, at which point pending payouts are auto-processed. BaseDrift runs at
 the webhook layer and is unaffected by that toggle.
 
 ---
@@ -279,7 +279,7 @@ engineering one.
 
 **The safe state is inaction.** A pending payout stays pending unless something
 explicitly approves it, so every failure path — bad signature, unknown fund
-account, unknown vendor, unreadable document, a crashed process, PayeeProof
+account, unknown vendor, unreadable document, a crashed process, BaseDrift
 being down entirely — leaves the money where it is. There is no code path that
 releases a payout on error, which is why a 500 is an acceptable response:
 Razorpay retries, and nothing has moved.

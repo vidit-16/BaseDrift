@@ -1,5 +1,5 @@
 """
-PayeeProof — what the measured rates mean at real-world volumes.
+BaseDrift — what the measured rates mean at real-world volumes.
 
     python eval/base_rates.py
     python eval/base_rates.py --payouts 100000 --change-rate 0.002
@@ -62,7 +62,7 @@ def measure(split):
     g = collections.defaultdict(lambda: [0, 0])
     for row in rows:
         v = vendors[row["vendor_id"]]
-        dec = RE.payeeproof(row, v, index, vendors)
+        dec = RE.basedrift(row, v, index, vendors)
         controls = [a for a in
                     (row.get("requester_controls_accounts") or "").split(";") if a]
         ver = verifier.verify(dec, v,
@@ -131,7 +131,7 @@ def main():
     pp_released = n - pp_holds
 
     print("  PER DAY")
-    print(f"    {'':34s} {'PayeeProof':>12s} {'hold everything':>16s}")
+    print(f"    {'':34s} {'BaseDrift':>12s} {'hold everything':>16s}")
     print(f"    {'payouts released with no call':34s} {pp_released:12,.0f} "
           f"{0:16,.0f}")
     print(f"    {'held — a human must act':34s} {pp_holds:12,.0f} {n:16,.0f}")

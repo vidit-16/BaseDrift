@@ -1,17 +1,17 @@
 """
-PayeeProof — semantic ablation test.
+BaseDrift — semantic ablation test.
 
 Proves the LLM layer does semantic normalization, not entity extraction.
 
 Run:
     pip install requests
-    $env:PAYEEPROOF_API_KEY="sk-..."       (PowerShell)
-    $env:PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1"
+    $env:BASEDRIFT_API_KEY="sk-..."       (PowerShell)
+    $env:BASEDRIFT_BASE_URL="https://openrouter.ai/api/v1"
   An existing GROQ_API_KEY is still read.
     python ablation.py
 
 This file is self-contained — no imports from the repo — but it honours the
-same PAYEEPROOF_* variables as src/llm_client.py, so it cannot end up measuring
+same BASEDRIFT_* variables as src/llm_client.py, so it cannot end up measuring
 a different provider than the system runs on.
 It auto-detects a working Groq model, so model deprecations won't break it.
 """
@@ -38,12 +38,12 @@ except ImportError:
 # read a hardcoded Groq URL while the system had moved to another provider, so
 # the two could silently disagree about which model was being measured. Same
 # variables, same defaults, no import.
-API_KEY  = (os.environ.get("PAYEEPROOF_API_KEY", "").strip()
+API_KEY  = (os.environ.get("BASEDRIFT_API_KEY", "").strip()
             or os.environ.get("GROQ_API_KEY", "").strip())
-BASE_URL = os.environ.get("PAYEEPROOF_BASE_URL",
+BASE_URL = os.environ.get("BASEDRIFT_BASE_URL",
                           "https://api.groq.com/openai/v1").rstrip("/")
 try:
-    CALL_GAP = float(os.environ.get("PAYEEPROOF_CALL_GAP", 7.0))
+    CALL_GAP = float(os.environ.get("BASEDRIFT_CALL_GAP", 7.0))
 except ValueError:
     CALL_GAP = 7.0
 CHAT_URL     = f"{BASE_URL}/chat/completions"
@@ -457,7 +457,7 @@ def run(label, classify_fn):
 
 def main():
     print()
-    print("PayeeProof — Semantic Ablation Test")
+    print("BaseDrift — Semantic Ablation Test")
     print()
 
     # 1. Baseline always runs, no API needed

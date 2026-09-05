@@ -1,5 +1,5 @@
 """
-PayeeProof — the case file: what a human did about a held payout.
+BaseDrift — the case file: what a human did about a held payout.
 
 The decision engine says *hold, and here is what would release this*. Everything
 after that happens in the physical world: somebody rings the supplier on a number

@@ -1,5 +1,5 @@
 """
-PayeeProof — verifier and pipeline tests.
+BaseDrift — verifier and pipeline tests.
 
 The verifier holds the project's central invariant: the callback goes to the
 number already on file, never to one supplied in the request. An attacker who

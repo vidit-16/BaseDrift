@@ -1,5 +1,5 @@
 """
-PayeeProof — synthetic data generator.
+BaseDrift — synthetic data generator.
 
 Four outputs:
   vendor_master.csv    — the "trusted source" every request gets checked against

@@ -1,5 +1,5 @@
 """
-PayeeProof — operator vocabulary.
+BaseDrift — operator vocabulary.
 
 Every internal identifier, translated into what an accounts-payable person would
 actually say. `R5_tier1_inconclusive` is a variable name; "Identity checks

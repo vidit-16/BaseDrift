@@ -1,5 +1,5 @@
 """
-PayeeProof — triage, the MCP inbox, and inbox-derived signals.
+BaseDrift — triage, the MCP inbox, and inbox-derived signals.
 
 Two properties carry this whole layer, and both are asserted structurally
 rather than described:

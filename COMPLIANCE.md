@@ -1,6 +1,6 @@
 # Compliance posture
 
-What a production deployment of PayeeProof would have to satisfy, what the
+What a production deployment of BaseDrift would have to satisfy, what the
 design already satisfies, and what it does not.
 
 Written now rather than later because the answer shapes the architecture. It is
@@ -32,7 +32,7 @@ from anonymisation. Every item below follows from that.
 | Regime | Why it reaches this system |
 |---|---|
 | **RBI, Storage of Payment System Data (2018)** | Payment system data is subject to India storage requirements. The system sends payment data to a model. |
-| **DPDP Act, 2023** | Vendor contacts, phone numbers, email addresses and — for proprietorships and partnerships — bank details are personal data. The merchant is the Data Fiduciary; PayeeProof is a Processor acting on its instructions. |
+| **DPDP Act, 2023** | Vendor contacts, phone numbers, email addresses and — for proprietorships and partnerships — bank details are personal data. The merchant is the Data Fiduciary; BaseDrift is a Processor acting on its instructions. |
 | **RBI Master Direction, Digital Payment Security Controls (2021)** | Injection defence, audit logging, access control, incident response. |
 | **RBI, Outsourcing of IT Services (2023)** | A hosted model API is IT outsourcing: due diligence, contractual right to audit, concentration risk, a documented exit plan. |
 | **MeitY AI advisories** | Non-binding, but directional on labelling and testing of deployed models. |
@@ -46,14 +46,14 @@ Extraction currently runs against a US-hosted API. Every call carries payment
 data and vendor personal data across a border.
 
 **And the chain is now two links, not one.** Inference reaches the model through
-a ROUTING layer: `PAYEEPROOF_BASE_URL` points at OpenRouter, which dispatches to
+a ROUTING layer: `BASEDRIFT_BASE_URL` points at OpenRouter, which dispatches to
 whichever host serves the model — DeepInfra in the runs behind the reported
 figures. Under DPDP each processor in that chain has to be named and
 contracted, so this is two due-diligence exercises rather than one.
 
 Worse without care: routing is dynamic. The first live call through it was
 served by a host nobody had assessed. Two mitigations exist and both are
-deliberate rather than incidental — `PAYEEPROOF_PROVIDER` pins the host with
+deliberate rather than incidental — `BASEDRIFT_PROVIDER` pins the host with
 `allow_fallbacks=False`, and `ExtractionResult.served_by` records who actually
 ran each call, so the audit trail names the processor rather than only the
 model. **Pinning is opt-in.** Unpinned, the processor for a given decision is
@@ -76,18 +76,18 @@ That qualifier is load-bearing and was missing. `eval/ablation.py` is
 deliberately standalone — it reproduces the ablation without importing the repo
 — and it carried its own hardcoded provider URL, so the claim "the only module
 that talks to a provider" was false as written. It now reads the same
-`PAYEEPROOF_*` variables, which is what actually matters: an evaluation that can
+`BASEDRIFT_*` variables, which is what actually matters: an evaluation that can
 silently measure a different provider than the system runs on is not evidence
 about the system.
 
 That was not originally a compliance decision. It is one now.
 
 **And it is no longer only a claim.** The provider is now configuration rather
-than code — `PAYEEPROOF_BASE_URL`, `PAYEEPROOF_API_KEY`, `PAYEEPROOF_MODEL` and
-`PAYEEPROOF_PROVIDER` — and the switch has actually been exercised: the v2
+than code — `BASEDRIFT_BASE_URL`, `BASEDRIFT_API_KEY`, `BASEDRIFT_MODEL` and
+`BASEDRIFT_PROVIDER` — and the switch has actually been exercised: the v2
 extraction corpus was produced through a different provider than v1's, running
 the same weights, with no change to the prompt, the rules, or any other file.
-Pointing `PAYEEPROOF_BASE_URL` at a self-hosted endpoint inside India is the
+Pointing `BASEDRIFT_BASE_URL` at a self-hosted endpoint inside India is the
 same operation, and nothing in the codebase distinguishes the two cases.
 
 Two consequences worth stating precisely:
@@ -161,7 +161,7 @@ Ordered by how much work they are, not how important.
 
 **1. Model and prompt pinning, not auto-detection.** *(half-closed)*
 `MODEL_PREFERENCE` still selects whatever is live, and that remains the default.
-`PAYEEPROOF_MODEL` now pins a model id and skips detection entirely, and every
+`BASEDRIFT_MODEL` now pins a model id and skips detection entirely, and every
 decision records the model *and* the host that ran it — so the capability exists
 and the provenance is real. What is outstanding is that a regulated deployment
 should have pinning ON, not merely available. A retired model caused a silent
@@ -216,7 +216,7 @@ and nothing the merchant does not already hold about their own payout.
 
 Three things about it are deliberate. It is HMAC-signed with the scheme we
 require of Razorpay inbound, because an unsigned "this payout was released" is
-worth forging. It is off unless PAYEEPROOF_WEBHOOK_URL is set. And a delivery
+worth forging. It is off unless BASEDRIFT_WEBHOOK_URL is set. And a delivery
 failure cannot affect a decision — the notifier swallows POST errors and the
 call site catches anything raised before the POST.
 
@@ -232,7 +232,7 @@ Vendor master, document store and audit trail.
 
 **6. Fiduciary obligations.**
 Breach notification path, a grievance mechanism, and a named contact — required
-of a Data Fiduciary under DPDP, and the merchant will need PayeeProof to support
+of a Data Fiduciary under DPDP, and the merchant will need BaseDrift to support
 them contractually.
 
 **7. Outsourcing controls for the model provider.** *(now two providers)*

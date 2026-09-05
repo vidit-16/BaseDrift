@@ -1,8 +1,8 @@
 """
-PayeeProof — the outbound notification, fired when a case resolves.
+BaseDrift — the outbound notification, fired when a case resolves.
 
 The inbound webhook is Razorpay telling us a payout is pending. This is the
-other direction: PayeeProof telling the merchant's own systems that a held
+other direction: BaseDrift telling the merchant's own systems that a held
 payout has been released or refused, and by whom. Without it the ERP has no way
 to learn the outcome except by somebody watching the dashboard.
 
@@ -22,7 +22,7 @@ The whole system's safe state is inaction, and a notification that could undo a
 release by failing would invert that.
 
 **2. It is signed, with the same scheme we require of Razorpay.** HMAC-SHA256
-over the exact bytes sent, in X-PayeeProof-Signature. A receiver that cannot
+over the exact bytes sent, in X-BaseDrift-Signature. A receiver that cannot
 authenticate the sender cannot act on this, and telling somebody's finance
 system "this payout was released" is worth forging. We verify signatures on the
 way in for exactly this reason; sending unsigned would be asking of others what
@@ -48,17 +48,17 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
-log = logging.getLogger("payeeproof.notifier")
+log = logging.getLogger("basedrift.notifier")
 
 TIMEOUT_SECONDS = 5
 
 
 def endpoint() -> Optional[str]:
-    return os.environ.get("PAYEEPROOF_WEBHOOK_URL") or None
+    return os.environ.get("BASEDRIFT_WEBHOOK_URL") or None
 
 
 def secret() -> Optional[str]:
-    return os.environ.get("PAYEEPROOF_WEBHOOK_SECRET") or None
+    return os.environ.get("BASEDRIFT_WEBHOOK_SECRET") or None
 
 
 def sign(raw: bytes, key: str) -> str:
@@ -85,7 +85,7 @@ def build_event(payout_id: str, audit: Dict[str, Any],
     return {
         "id": f"evt_pp_{payout_id}_{int(at)}",
         "entity": "event",
-        "event": f"payeeproof.case.{resolution}",
+        "event": f"basedrift.case.{resolution}",
         "created_at": int(at),
         "payload": {
             "case": {
@@ -134,13 +134,13 @@ def notify(payout_id: str, audit: Dict[str, Any],
 
     key = secret()
     if key:
-        headers["X-PayeeProof-Signature"] = sign(raw, key)
+        headers["X-BaseDrift-Signature"] = sign(raw, key)
     else:
         # Loud, because an unsigned notification is one the receiver cannot
         # safely act on, and silence here would let a deployment run that way
         # for months without anyone noticing.
-        log.warning("PAYEEPROOF_WEBHOOK_URL is set without "
-                    "PAYEEPROOF_WEBHOOK_SECRET; sending unsigned")
+        log.warning("BASEDRIFT_WEBHOOK_URL is set without "
+                    "BASEDRIFT_WEBHOOK_SECRET; sending unsigned")
 
     try:
         if post is None:

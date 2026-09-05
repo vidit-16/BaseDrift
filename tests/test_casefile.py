@@ -1,5 +1,5 @@
 """
-PayeeProof — the case file, and the two-person rule.
+BaseDrift — the case file, and the two-person rule.
 
 The buttons on the dashboard are the moment this system stops being a classifier
 and starts being a control. What matters is not that they exist but what they

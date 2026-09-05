@@ -1,5 +1,5 @@
 """
-PayeeProof — synthetic accounts-payable inbox.
+BaseDrift — synthetic accounts-payable inbox.
 
 WHY THIS IS A SEPARATE FILE FROM generate_data.py
 =================================================

@@ -1,5 +1,5 @@
 """
-PayeeProof — rules evaluation.
+BaseDrift — rules evaluation.
 
 WHAT THIS MEASURES, AND WHAT IT DOES NOT
 ========================================
@@ -34,7 +34,7 @@ on. So the step-up column went UP and the FALSE BLOCK column went to zero, and
 neither movement is an accuracy result. What the rules still buy over holding
 everything is the release rate — the payouts that never need a phone call.
 
-So accuracy cannot distinguish PayeeProof from doing nothing. What the rules
+So accuracy cannot distinguish BaseDrift from doing nothing. What the rules
 actually buy is a lower STEP-UP RATE: the same fraud capture while phoning the
 vendor far less often. Every run below is reported against that null baseline,
 because a number without it is meaningless.
@@ -264,7 +264,7 @@ def evaluate(rows, vendors, index, decide_fn, name):
 
 # ── Decision functions under test ─────────────────────────────────────
 
-def payeeproof(row, vendor, index, vendors=None):
+def basedrift(row, vendor, index, vendors=None):
     """
     `vendors` is the whole master, and it is a PARAMETER rather than a module
     global for a reason that cost a measurement.
@@ -322,7 +322,7 @@ def report(results, split, n):
           f"{'rec.rej':>8s} {'FALSE BLOCK':>12s} {'false hold':>11s}")
     print("  " + "-" * 92)
     for r in results:
-        star = " *" if r.name.startswith("PayeeProof") else "  "
+        star = " *" if r.name.startswith("BaseDrift") else "  "
         print(f"{star}{r.name:36s} {r.recall:7.1%} {r.precision:6.1%} "
               f"{r.stepup_rate:7.1%} {r.recommended_rate:8.1%} "
               f"{r.false_block_rate:11.1%} {r.false_hold_rate:11.1%}")
@@ -332,7 +332,7 @@ def report(results, split, n):
     print("  rec.rej     = held, and the engine recommends a human reject it")
     print()
 
-    pp = next(r for r in results if r.name.startswith("PayeeProof"))
+    pp = next(r for r in results if r.name.startswith("BaseDrift"))
     null = next(r for r in results if r.name.startswith("null"))
     delta = pp.recall - null.recall
     if abs(delta) < 1e-9:
@@ -372,7 +372,7 @@ def report(results, split, n):
     print(f"             one this system named — the planted-account pattern.")
     print()
 
-    print("  PayeeProof, final outcome by scenario   (! marks a wrong outcome):")
+    print("  BaseDrift, final outcome by scenario   (! marks a wrong outcome):")
     # SCENARIOS fixes the READING ORDER, not the contents. It used to fix both,
     # and when two scenarios were added to the generator they were evaluated
     # correctly and then silently omitted from this table — 248 of 278 cases
@@ -422,7 +422,7 @@ def sweep(rows, vendors, index):
     print("  " + "-" * 52)
     for k in range(1, 6):
         def fn(row, vendor, idx, vendors=None, _k=k):
-            d = payeeproof(row, vendor, idx, vendors)
+            d = basedrift(row, vendor, idx, vendors)
             if d.rule_fired == "R4_bec_pattern":
                 n_warn = sum(1 for s in d.tier2 if s.result == WARN)
                 if n_warn < _k:
@@ -463,7 +463,7 @@ def main():
         sweep(rows, vendors, index)
         return
 
-    results = [evaluate(rows, vendors, index, payeeproof, "PayeeProof, full rule table")]
+    results = [evaluate(rows, vendors, index, basedrift, "BaseDrift, full rule table")]
     results += [evaluate(rows, vendors, index, fn, nm) for nm, fn in BASELINES]
     report(results, args.split, len(rows))
 

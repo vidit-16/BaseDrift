@@ -1,5 +1,5 @@
 """
-PayeeProof — the two-minute demo.
+BaseDrift — the two-minute demo.
 
     python src/demo.py
     python src/demo.py --serve      # then open http://localhost:8000/
@@ -119,7 +119,7 @@ def use_cached_extraction_if_no_key(case_id):
     rendered = next(c for c in R.render_split("dev") if c.case_id == case_id)
     path = X.cache_path(rendered.sha256, "openai/gpt-oss-120b", 1)
     if not os.path.exists(path):
-        return "NO CACHE — set PAYEEPROOF_API_KEY to read the message"
+        return "NO CACHE — set BASEDRIFT_API_KEY to read the message"
 
     with open(path, encoding="utf-8") as f:
         payload = _json.load(f)
@@ -194,7 +194,7 @@ def build_store(vendors, case):
 
 def fire(store, fund_account_id, payout_id, amount, doc_id=None, fav=None):
     """A genuinely signed payout.pending event through the real handler."""
-    notes = {"payeeproof_document_id": doc_id} if doc_id else {}
+    notes = {"basedrift_document_id": doc_id} if doc_id else {}
     body = {
         "id": f"evt_{payout_id}", "entity": "event", "event": "payout.pending",
         "contains": ["payout"], "created_at": int(time.time()),
@@ -222,7 +222,7 @@ def _replay_queue(store, rows):
     which corresponded to a message anyone could open. Two worlds that barely
     touched: a real mailbox from the corpus, and three hand-built payouts.
 
-    The model was right and the demo was wrong. PayeeProof decides when money
+    The model was right and the demo was wrong. BaseDrift decides when money
     moves, not when mail arrives, so a change request that no payout has been
     attempted against genuinely has nothing to decide. But a queue where 69 of
     70 rows say "awaiting payment" teaches the viewer nothing, and the first
@@ -318,7 +318,7 @@ def _replay_queue(store, rows):
 def _fire_replay(store, fund_account_id, payout_id, amount, doc_id, fav,
                  extract_fn):
     """fire(), with the extractor supplied instead of bought."""
-    notes = {"payeeproof_document_id": doc_id} if doc_id else {}
+    notes = {"basedrift_document_id": doc_id} if doc_id else {}
     body = {
         "id": f"evt_{payout_id}", "entity": "event", "event": "payout.pending",
         "contains": ["payout"], "created_at": int(time.time()),
@@ -399,7 +399,7 @@ def main():
 
     print()
     rule("═")
-    print("  PayeeProof — one payout, end to end")
+    print("  BaseDrift — one payout, end to end")
     rule("═")
     beat(f"vendor        {v.legal_name}  ({v.vendor_id})")
     beat(f"domain        {v.known_domain}")

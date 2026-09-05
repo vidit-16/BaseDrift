@@ -1,5 +1,5 @@
 """
-PayeeProof — extractor.py
+BaseDrift — extractor.py
 
 The ONLY place an LLM touches the pipeline.
 
@@ -558,7 +558,7 @@ thread rather than the old one.
 Priya Nair, Suraksha Systems
 """.strip()
 
-    print("Testing extractor (needs PAYEEPROOF_API_KEY or GROQ_API_KEY)...\n")
+    print("Testing extractor (needs BASEDRIFT_API_KEY or GROQ_API_KEY)...\n")
     r = extract(TEST)
     print(f"ok: {r.ok}")
     if not r.ok:

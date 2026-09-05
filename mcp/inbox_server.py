@@ -1,5 +1,5 @@
 """
-PayeeProof — MCP inbox server.
+BaseDrift — MCP inbox server.
 
 Read-only tools over one merchant's accounts-payable mailbox. Two callers:
 

@@ -1,4 +1,4 @@
-# PayeeProof
+# BaseDrift
 
 Razorpay AI Buildathon — Track 2 (AI Risk Manager).
 Read README.md first for the full problem statement and evidence.
@@ -40,7 +40,7 @@ Groq free tier. No credit card. console.groq.com
                             The handler NEVER decides; it calls decide().
     src/webhook_app.py      ASGI entry.  uvicorn webhook_app:app --app-dir src
                             Store starts EMPTY on purpose — no fund accounts
-                            resolve, so everything holds. PAYEEPROOF_SEED_DEMO=1
+                            resolve, so everything holds. BASEDRIFT_SEED_DEMO=1
                             loads fixtures; never make that a fallback.
     src/dashboard.py        operator view. Shows what the webhook response
                             withholds, ON PURPOSE — different audience. Needs
@@ -747,12 +747,12 @@ V2.7  THE PROVIDER IS CONFIGURATION, NOT CODE  (DONE, Phase 6 prep)
       than the system runs on is not evidence about the system. It is now FIVE ENVIRONMENT VARIABLES and it has been
       exercised against a second provider:
 
-        PAYEEPROOF_BASE_URL   provider root (default: Groq)
-        PAYEEPROOF_API_KEY    falls back to GROQ_API_KEY, so existing setups
+        BASEDRIFT_BASE_URL   provider root (default: Groq)
+        BASEDRIFT_API_KEY    falls back to GROQ_API_KEY, so existing setups
                               keep working and this is additive
-        PAYEEPROOF_MODEL      pin an id, skipping detection
-        PAYEEPROOF_PROVIDER   OpenRouter: pin WHICH host serves the model
-        PAYEEPROOF_CALL_GAP   7.0s is a Groq free-tier figure that costs 93
+        BASEDRIFT_MODEL      pin an id, skipping detection
+        BASEDRIFT_PROVIDER   OpenRouter: pin WHICH host serves the model
+        BASEDRIFT_CALL_GAP   7.0s is a Groq free-tier figure that costs 93
                               minutes over 800 calls anywhere else
 
       MODEL_PREFERENCE gained the bare "gpt-oss-120b" spelling: Groq and
@@ -767,7 +767,7 @@ V2.7  THE PROVIDER IS CONFIGURATION, NOT CODE  (DONE, Phase 6 prep)
 
       "gpt-oss-120b decided this payout" is therefore not a traceable claim. So
       ExtractionResult gained served_by, llm_client reports the host and the
-      token usage back through meta, and PAYEEPROOF_PROVIDER pins routing with
+      token usage back through meta, and BASEDRIFT_PROVIDER pins routing with
       allow_fallbacks=False — because a pin that silently falls back is worse
       than no pin at all: the audit would name one company while another ran the
       model.
@@ -1704,7 +1704,7 @@ V2.K  THE DEMO WAS TWO WORLDS THAT BARELY TOUCHED
       happened to correlate. The other 69 routed messages said "Awaiting
       payment", which is true and useless.
 
-      THE MODEL WAS NOT WRONG. PayeeProof decides when money moves, not when
+      THE MODEL WAS NOT WRONG. BaseDrift decides when money moves, not when
       mail arrives, so a change request with no payout against it genuinely has
       nothing to decide. That is the architecture and it stays. What was wrong
       was demonstrating it with a mailbox and a payout queue that had almost

@@ -1,5 +1,5 @@
 """
-PayeeProof — webhook demo.
+BaseDrift — webhook demo.
 
 Drives the real FastAPI app over real HTTP with real HMAC-signed bodies. Nothing
 here is stubbed except the RazorpayX side, which is a local store rather than a
@@ -150,7 +150,7 @@ def main():
 
     print()
     print("=" * 74)
-    print("PayeeProof — payout.pending webhook")
+    print("BaseDrift — payout.pending webhook")
     print("Every payout below is frozen. No money has moved yet.")
     print("=" * 74)
     print()
@@ -190,7 +190,7 @@ def main():
              ("HOLD + recommend reject. Every bank-level check passes; "
               "authorisation is absent."),
              signed_post(client, "fa_new",
-                         notes={"payeeproof_document_id": "doc_bec"}))
+                         notes={"basedrift_document_id": "doc_bec"}))
 
     print("=" * 74)
     print("The safe state is inaction: a pending payout stays pending unless")

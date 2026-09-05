@@ -1,5 +1,5 @@
 """
-PayeeProof — evaluation harness tests.
+BaseDrift — evaluation harness tests.
 
 The harness had a bug that would have silently corrupted every future
 measurement: it cached whatever came back from the model client, including

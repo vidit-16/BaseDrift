@@ -14,7 +14,7 @@ it. That is defensible if described accurately and indefensible if oversold.
 The specification has four pieces. Most write-ups list three and use a product
 word for one of them.
 
-| part | what it is | in PayeeProof |
+| part | what it is | in BaseDrift |
 |---|---|---|
 | **Host** | the AI application | `src/investigator.py` |
 | **Client** | lives in the host, holds one connection to one server | **missing** |
@@ -31,7 +31,7 @@ the **client**.
 Two standard choices, carrying identical JSON-RPC messages:
 
 - **stdio** — the host launches the server as a subprocess and they talk over
-  stdin/stdout. Right choice for PayeeProof: runs locally, nothing on a network.
+  stdin/stdout. Right choice for BaseDrift: runs locally, nothing on a network.
 - **Streamable HTTP** — the server is a web service. What you would use if
   Razorpay hosted one inbox server for many merchants.
 
@@ -163,13 +163,13 @@ Microsoft Graph work fine from ordinary Python.
 Ranked by how much weight each can carry.
 
 **1. Credentials — the real argument.**
-A direct Gmail integration means PayeeProof holds OAuth tokens for the
+A direct Gmail integration means BaseDrift holds OAuth tokens for the
 merchant's mailbox: a fraud vendor with read access to customer email. That is a
 serious liability and COMPLIANCE.md already has to argue data minimisation under
 DPDP.
 
 With MCP, **the merchant runs the server.** They hold the credentials, they set
-the scopes, they can audit what was called. PayeeProof only ever names a tool.
+the scopes, they can audit what was called. BaseDrift only ever names a tool.
 That is an architectural difference, not a stylistic one, and it is the argument
 worth keeping.
 
@@ -201,7 +201,7 @@ but weak on its own — a plain Python interface gives the same thing.
 > credentials.
 
 **Avoid:**
-> PayeeProof uses MCP to read inboxes.
+> BaseDrift uses MCP to read inboxes.
 
 Anyone who knows MCP will ask which transport, and there isn't one.
 

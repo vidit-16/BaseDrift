@@ -1,5 +1,5 @@
 """
-PayeeProof — inbox_signals.py
+BaseDrift — inbox_signals.py
 
 Turns mailbox facts into Tier 2 signals.
 

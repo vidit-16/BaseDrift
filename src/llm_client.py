@@ -1,5 +1,5 @@
 """
-PayeeProof — llm_client.py
+BaseDrift — llm_client.py
 
 Single place that talks to the LLM provider. Everything else imports
 from here, so a model deprecation is a one-line fix in MODEL_PREFERENCE
@@ -18,16 +18,16 @@ variables below, because an evaluation that can measure a different provider
 than the system runs on is not evidence about the system. That claim
 was true but untested. It is now one ENVIRONMENT VARIABLE, and exercised:
 
-  PAYEEPROOF_BASE_URL   provider root, OpenAI-compatible   (default: Groq)
-  PAYEEPROOF_API_KEY    key for that provider              (falls back to
+  BASEDRIFT_BASE_URL   provider root, OpenAI-compatible   (default: Groq)
+  BASEDRIFT_API_KEY    key for that provider              (falls back to
                                                             GROQ_API_KEY)
-  PAYEEPROOF_MODEL      pin a model id, skipping detection
-  PAYEEPROOF_PROVIDER   OpenRouter only: the host(s) allowed to serve the
+  BASEDRIFT_MODEL      pin a model id, skipping detection
+  BASEDRIFT_PROVIDER   OpenRouter only: the host(s) allowed to serve the
                         model, comma separated and tried in order. NO host
                         outside the list can ever serve a call. List one for a
                         hard pin; list two for a named primary and a named
                         fallback.
-  PAYEEPROOF_CALL_GAP   seconds between calls (default 7.0, a Groq free-tier
+  BASEDRIFT_CALL_GAP   seconds between calls (default 7.0, a Groq free-tier
                         figure that costs 90 minutes anywhere else)
 
 The model does not change when the provider does. gpt-oss-120b is open-weight,
@@ -39,8 +39,8 @@ to a closed hosted model would forfeit.
   OpenRouter  https://openrouter.ai/api/v1       openai/gpt-oss-120b
   Cerebras    https://api.cerebras.ai/v1         gpt-oss-120b
 
-    PowerShell:  $env:PAYEEPROOF_API_KEY="sk-or-..."
-                 $env:PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1"
+    PowerShell:  $env:BASEDRIFT_API_KEY="sk-or-..."
+                 $env:BASEDRIFT_BASE_URL="https://openrouter.ai/api/v1"
 
 WHY THE SERVING PROVIDER GOES IN THE AUDIT RECORD
 =================================================
@@ -48,7 +48,7 @@ OpenRouter routes one model id across ~18 hosts, so consecutive calls can be
 served by different companies. For most projects that is a feature. Here the
 whole point of the audit trail is that a payment decision traces to exactly what
 produced it, and "some host in a pool" is a weaker record than a named one. So
-the provider is pinned when PAYEEPROOF_PROVIDER is set, and whichever host
+the provider is pinned when BASEDRIFT_PROVIDER is set, and whichever host
 actually served the call is reported back through `meta` alongside the model.
 
 Handles, because all three actually bit us during development:
@@ -76,7 +76,7 @@ DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 
 
 def base_url():
-    return os.environ.get("PAYEEPROOF_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
+    return os.environ.get("BASEDRIFT_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
 
 
 def chat_url():
@@ -121,18 +121,18 @@ _cached_model = None
 
 def get_api_key():
     """
-    PAYEEPROOF_API_KEY first, GROQ_API_KEY second.
+    BASEDRIFT_API_KEY first, GROQ_API_KEY second.
 
     The fallback is deliberate: an existing Groq setup keeps working untouched,
     so switching provider is additive rather than a migration.
     """
-    return (os.environ.get("PAYEEPROOF_API_KEY", "").strip()
+    return (os.environ.get("BASEDRIFT_API_KEY", "").strip()
             or os.environ.get("GROQ_API_KEY", "").strip())
 
 
 def call_gap():
     try:
-        return float(os.environ.get("PAYEEPROOF_CALL_GAP", DEFAULT_CALL_GAP))
+        return float(os.environ.get("BASEDRIFT_CALL_GAP", DEFAULT_CALL_GAP))
     except ValueError:
         return DEFAULT_CALL_GAP
 
@@ -145,14 +145,14 @@ def detect_model(api_key=None, force=False):
     if _cached_model and not force:
         return _cached_model, None
 
-    pinned = os.environ.get("PAYEEPROOF_MODEL", "").strip()
+    pinned = os.environ.get("BASEDRIFT_MODEL", "").strip()
     if pinned:
         _cached_model = pinned
         return pinned, None
 
     api_key = api_key or get_api_key()
     if not api_key:
-        return None, "no API key: set PAYEEPROOF_API_KEY (or GROQ_API_KEY)"
+        return None, "no API key: set BASEDRIFT_API_KEY (or GROQ_API_KEY)"
 
     try:
         r = requests.get(models_url(),
@@ -197,7 +197,7 @@ def call(system_prompt, user_content, max_tokens=DEFAULT_MAX_TOKENS,
     """
     api_key = api_key or get_api_key()
     if not api_key:
-        return None, "no API key: set PAYEEPROOF_API_KEY (or GROQ_API_KEY)"
+        return None, "no API key: set BASEDRIFT_API_KEY (or GROQ_API_KEY)"
 
     if model is None:
         model, err = detect_model(api_key)
@@ -241,7 +241,7 @@ def call(system_prompt, user_content, max_tokens=DEFAULT_MAX_TOKENS,
     # in. One host is the strict pin; two is a named primary and a named
     # fallback; the failure mode with a single busy host is what prompted this.
     pinned = [h.strip() for h in
-              os.environ.get("PAYEEPROOF_PROVIDER", "").split(",") if h.strip()]
+              os.environ.get("BASEDRIFT_PROVIDER", "").split(",") if h.strip()]
     if pinned:
         payload["provider"] = {"order": pinned,
                                "only": pinned,
@@ -370,7 +370,7 @@ def pace():
     Sleep between calls to stay under the provider's rate limit.
 
     The default of 7s is Groq's free tier and nothing else. On a provider with
-    no per-minute ceiling, set PAYEEPROOF_CALL_GAP=0.1 — over an 800-case run
+    no per-minute ceiling, set BASEDRIFT_CALL_GAP=0.1 — over an 800-case run
     the default alone costs 93 minutes.
     """
     gap = call_gap()

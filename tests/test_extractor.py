@@ -1,5 +1,5 @@
 """
-PayeeProof — extractor tests.
+BaseDrift — extractor tests.
 
 The extractor is the only place an LLM touches the pipeline, which makes it the
 trust boundary. These tests never call the model: `llm_client.call_json` is
@@ -357,29 +357,29 @@ def _env(**kw):
 
 def test_the_provider_is_one_environment_variable():
     import llm_client as L
-    with _env(PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1"):
+    with _env(BASEDRIFT_BASE_URL="https://openrouter.ai/api/v1"):
         assert L.chat_url() == "https://openrouter.ai/api/v1/chat/completions"
         assert L.models_url() == "https://openrouter.ai/api/v1/models"
-    with _env(PAYEEPROOF_BASE_URL=None):
+    with _env(BASEDRIFT_BASE_URL=None):
         assert "groq" in L.chat_url()
 
 
 def test_a_trailing_slash_does_not_produce_a_double_slash():
     """The obvious way to get a 404 on a base URL someone pasted from docs."""
     import llm_client as L
-    with _env(PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1/"):
+    with _env(BASEDRIFT_BASE_URL="https://openrouter.ai/api/v1/"):
         assert L.chat_url() == "https://openrouter.ai/api/v1/chat/completions"
 
 
 def test_an_existing_groq_key_keeps_working():
     """
-    Switching provider has to be ADDITIVE. If PAYEEPROOF_API_KEY were required,
+    Switching provider has to be ADDITIVE. If BASEDRIFT_API_KEY were required,
     every existing setup would break on upgrade for no reason.
     """
     import llm_client as L
-    with _env(PAYEEPROOF_API_KEY=None, GROQ_API_KEY="gsk_existing"):
+    with _env(BASEDRIFT_API_KEY=None, GROQ_API_KEY="gsk_existing"):
         assert L.get_api_key() == "gsk_existing"
-    with _env(PAYEEPROOF_API_KEY="sk-or-new", GROQ_API_KEY="gsk_existing"):
+    with _env(BASEDRIFT_API_KEY="sk-or-new", GROQ_API_KEY="gsk_existing"):
         assert L.get_api_key() == "sk-or-new"
 
 
@@ -390,11 +390,11 @@ def test_the_call_gap_is_configurable_and_survives_nonsense():
     has been going for hours.
     """
     import llm_client as L
-    with _env(PAYEEPROOF_CALL_GAP="0.1"):
+    with _env(BASEDRIFT_CALL_GAP="0.1"):
         assert L.call_gap() == 0.1
-    with _env(PAYEEPROOF_CALL_GAP="not-a-number"):
+    with _env(BASEDRIFT_CALL_GAP="not-a-number"):
         assert L.call_gap() == L.DEFAULT_CALL_GAP
-    with _env(PAYEEPROOF_CALL_GAP=None):
+    with _env(BASEDRIFT_CALL_GAP=None):
         assert L.call_gap() == L.DEFAULT_CALL_GAP
 
 
@@ -415,7 +415,7 @@ def test_a_pinned_model_skips_detection_entirely():
     """Detection costs a round trip and can pick a different model than intended."""
     import llm_client as L
     L._cached_model = None
-    with _env(PAYEEPROOF_MODEL="gpt-oss-120b"):
+    with _env(BASEDRIFT_MODEL="gpt-oss-120b"):
         model, err = L.detect_model(force=True)
         assert err is None and model == "gpt-oss-120b"
     L._cached_model = None
@@ -455,8 +455,8 @@ def test_the_audit_gets_the_provider_not_just_the_model():
     requests.post = lambda *a, **k: FakeResponse()
     meta = {}
     try:
-        with _env(PAYEEPROOF_API_KEY="k",
-                  PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1"):
+        with _env(BASEDRIFT_API_KEY="k",
+                  BASEDRIFT_BASE_URL="https://openrouter.ai/api/v1"):
             text, err = L.call("sys", "user", model="openai/gpt-oss-120b", meta=meta)
     finally:
         requests.post = real
@@ -498,7 +498,7 @@ def test_pinning_never_permits_an_unnamed_host():
 
         requests.post = spy
         try:
-            with _env(PAYEEPROOF_API_KEY="k", PAYEEPROOF_PROVIDER=value):
+            with _env(BASEDRIFT_API_KEY="k", BASEDRIFT_PROVIDER=value):
                 L.call("sys", "user", model="openai/gpt-oss-120b")
         finally:
             requests.post = real
@@ -539,9 +539,9 @@ def test_a_pinned_provider_falls_through_to_the_next_named_host():
 
     requests.post = spy
     try:
-        with _env(PAYEEPROOF_API_KEY="k",
-                  PAYEEPROOF_PROVIDER="CoreWeave, DeepInfra",
-                  PAYEEPROOF_PROVIDER_STRICT=None):
+        with _env(BASEDRIFT_API_KEY="k",
+                  BASEDRIFT_PROVIDER="CoreWeave, DeepInfra",
+                  BASEDRIFT_PROVIDER_STRICT=None):
             L.call("sys", "user", model="openai/gpt-oss-120b")
     finally:
         requests.post = real
@@ -574,7 +574,7 @@ def test_a_single_named_host_is_still_a_hard_pin():
 
     requests.post = spy
     try:
-        with _env(PAYEEPROOF_API_KEY="k", PAYEEPROOF_PROVIDER="DeepInfra"):
+        with _env(BASEDRIFT_API_KEY="k", BASEDRIFT_PROVIDER="DeepInfra"):
             L.call("sys", "user", model="openai/gpt-oss-120b")
     finally:
         requests.post = real
@@ -603,7 +603,7 @@ def test_no_provider_pin_sends_no_provider_field():
 
     requests.post = spy
     try:
-        with _env(PAYEEPROOF_API_KEY="k", PAYEEPROOF_PROVIDER=None):
+        with _env(BASEDRIFT_API_KEY="k", BASEDRIFT_PROVIDER=None):
             L.call("sys", "user", model="openai/gpt-oss-120b")
     finally:
         requests.post = real

@@ -1,5 +1,5 @@
 """
-PayeeProof — decision_engine regression tests.
+BaseDrift — decision_engine regression tests.
 
 Every test here is a REGRESSION test for a specific flaw found by audit. Each
 one fails against the pre-P0 engine and passes after. The point is not coverage

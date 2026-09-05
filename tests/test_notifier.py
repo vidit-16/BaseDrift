@@ -1,5 +1,5 @@
 """
-PayeeProof — the outbound notification fired when a case resolves.
+BaseDrift — the outbound notification fired when a case resolves.
 
 The inbound webhook is Razorpay telling us a payout is pending. This is the
 other direction, and it is the only way the merchant's own systems learn that a
@@ -81,7 +81,7 @@ def _case():
 
 def test_nothing_is_sent_when_no_endpoint_is_configured():
     sent = []
-    with _Env(PAYEEPROOF_WEBHOOK_URL=None, PAYEEPROOF_WEBHOOK_SECRET=None):
+    with _Env(BASEDRIFT_WEBHOOK_URL=None, BASEDRIFT_WEBHOOK_SECRET=None):
         ev = N.notify("pout_1", AUDIT, _case(), "released", "Rahul Iyer",
                       post=lambda *a, **k: sent.append(a))
     assert ev is None
@@ -101,12 +101,12 @@ def test_the_payload_is_signed_over_the_exact_bytes_sent():
     def post(url, data=None, headers=None, timeout=None):
         captured.update(url=url, data=data, headers=headers)
 
-    with _Env(PAYEEPROOF_WEBHOOK_URL="https://erp.example/hook",
-              PAYEEPROOF_WEBHOOK_SECRET="whsec_out"):
+    with _Env(BASEDRIFT_WEBHOOK_URL="https://erp.example/hook",
+              BASEDRIFT_WEBHOOK_SECRET="whsec_out"):
         N.notify("pout_1", AUDIT, _case(), "released", "Rahul Iyer", post=post)
 
     raw = captured["data"]
-    got = captured["headers"]["X-PayeeProof-Signature"]
+    got = captured["headers"]["X-BaseDrift-Signature"]
     want = hmac.new(b"whsec_out", raw, hashlib.sha256).hexdigest()
     assert got == want, "signature does not cover the bytes that were sent"
     assert json.loads(raw)["payload"]["case"]["payout_id"] == "pout_1"
@@ -120,11 +120,11 @@ def test_an_unsigned_send_is_still_possible_but_warned():
     something anyone should discover by accident.
     """
     captured = {}
-    with _Env(PAYEEPROOF_WEBHOOK_URL="https://erp.example/hook",
-              PAYEEPROOF_WEBHOOK_SECRET=None):
+    with _Env(BASEDRIFT_WEBHOOK_URL="https://erp.example/hook",
+              BASEDRIFT_WEBHOOK_SECRET=None):
         N.notify("pout_1", AUDIT, _case(), "released", "Rahul Iyer",
                  post=lambda url, **k: captured.update(k))
-    assert "X-PayeeProof-Signature" not in captured.get("headers", {})
+    assert "X-BaseDrift-Signature" not in captured.get("headers", {})
 
 
 # ══ 1. Delivery never affects the decision ════════════════════════════
@@ -138,8 +138,8 @@ def test_a_failed_delivery_never_raises():
     def explode(*a, **k):
         raise ConnectionError("receiver is down")
 
-    with _Env(PAYEEPROOF_WEBHOOK_URL="https://erp.example/hook",
-              PAYEEPROOF_WEBHOOK_SECRET="whsec_out"):
+    with _Env(BASEDRIFT_WEBHOOK_URL="https://erp.example/hook",
+              BASEDRIFT_WEBHOOK_SECRET="whsec_out"):
         ev = N.notify("pout_1", AUDIT, _case(), "released", "Rahul Iyer",
                       post=explode)
     assert ev is not None, "the event should still be reported as built"
@@ -228,7 +228,7 @@ def test_the_event_carries_who_established_what():
     assert case["engine_outcome"] == "STEP_UP_VERIFY"
     actors = [h["actor"] for h in case["history"]]
     assert actors == ["Priya Menon", "Rahul Iyer"]
-    assert ev["event"] == "payeeproof.case.released"
+    assert ev["event"] == "basedrift.case.released"
 
 
 def test_the_event_id_is_stable_enough_to_deduplicate_on():

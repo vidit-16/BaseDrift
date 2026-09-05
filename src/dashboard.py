@@ -1,5 +1,5 @@
 """
-PayeeProof — operator dashboard.
+BaseDrift — operator dashboard.
 
 A live view of decisions as payout.pending events arrive, mounted on the same
 FastAPI app as the webhook so a demo shows the decision the moment it is made.
@@ -183,7 +183,7 @@ def _page(title: str, body: str) -> str:
 
 def _header(sub: str, extra: str = "") -> str:
     return (
-        "<header><h1>Payee<span>Proof</span></h1>"
+        "<header><h1>Base<span>Drift</span></h1>"
         f"<div class=\"sub\">{_e(sub)}</div><div class=\"spacer\"></div>{extra}</header>"
     )
 
@@ -299,7 +299,7 @@ def render_index(audits: List[Dict[str, Any]]) -> str:
                  "<code>python src/webhook_demo.py</code> drives five signed "
                  "scenarios, or POST a signed event to "
                  "<code>/webhooks/razorpay</code>.</div>")
-        return _page("PayeeProof — decisions", body)
+        return _page("BaseDrift — decisions", body)
 
     held = sum(1 for a in audits if not a.get("payout_allowed"))
     rec = sum(1 for a in audits
@@ -358,9 +358,22 @@ def render_index(audits: List[Dict[str, Any]]) -> str:
     body += ("<p class=\"note\">Each of these was frozen at "
              "<code>payout.pending</code> and stays frozen until somebody acts. "
              "Open one to see the evidence and what would release it.</p>")
+    # WHY THIS COUNT CAN EXCEED THE INBOX'S. The inbox lists MESSAGES; this
+    # lists PAYOUTS, and a payout does not need a message. One arriving with no
+    # change request on file is not an edge case — it is R2, judging the real
+    # destination when nothing has been claimed about it — and a viewer
+    # comparing the two pages should be told that rather than left to wonder.
+    orphans = sum(1 for a in audits
+                  if not (a.get("document") or {}).get("document_id"))
+    if orphans:
+        body += (f'<p class="note">{orphans} of these arrived with no change '
+                 "request on file. A payout does not need a message to exist, "
+                 "which is why this page can show more than the inbox does — "
+                 "the engine then judges the destination on the vendor master "
+                 "alone.</p>")
     body += table(released, f"Released — {len(released)}",
                   "No payouts have been released yet.")
-    return _page("PayeeProof — decisions", body)
+    return _page("BaseDrift — decisions", body)
 
 
 def _signal_rows_v2(sigs: List[Dict[str, Any]]) -> str:
@@ -434,7 +447,7 @@ def _status_cell(r: Dict[str, Any]) -> str:
     if r.get("verdict") == "ROUTE":
         return ('<span class="pill muted" title="no payout.pending event yet">'
                 'Awaiting payment</span>'
-                '<div class="note">Read and on file. PayeeProof decides when a '
+                '<div class="note">Read and on file. BaseDrift decides when a '
                 'payment is attempted against it.</div>')
     return '<span class="pill muted">Filtered out</span>'
 
@@ -454,7 +467,7 @@ def render_inbox(rows: List[Dict[str, Any]]) -> str:
         body += ('<div class="empty">No messages triaged yet.<br>'
                  'POST one to <code>/messages</code>, or run '
                  '<code>python src/demo.py --serve</code>.</div>')
-        return _page("PayeeProof — inbox", body)
+        return _page("BaseDrift — inbox", body)
 
     routed = [r for r in rows if r.get("verdict") == "ROUTE"]
     dropped = [r for r in rows if r.get("verdict") != "ROUTE"]
@@ -526,7 +539,7 @@ def render_inbox(rows: List[Dict[str, Any]]) -> str:
     if len(dropped) > 60:
         body += f'<p class="note">{len(dropped) - 60} more not shown.</p>'
 
-    return _page("PayeeProof — inbox", body)
+    return _page("BaseDrift — inbox", body)
 
 
 def render_message(r: Optional[Dict[str, Any]]) -> str:
@@ -543,7 +556,7 @@ def render_message(r: Optional[Dict[str, Any]]) -> str:
         body = _header("message not found")
         body += ('<div class="empty">No message with that id.<br>'
                  '<a href="/inbox">Back to the inbox</a></div>')
-        return _page("PayeeProof — not found", body)
+        return _page("BaseDrift — not found", body)
 
     subject = r.get("subject") or "(no subject)"
     body = _header(subject, '<a href="/inbox">&larr; Inbox</a>')
@@ -610,13 +623,13 @@ def render_message(r: Optional[Dict[str, Any]]) -> str:
         body += '<h2>What happens to the payment</h2><div class="card">'
         body += ('<div><span class="pill muted">Awaiting payment</span></div>'
                  '<div class="reason">This request has been read and filed. '
-                 'PayeeProof decides when a payment is actually attempted '
+                 'BaseDrift decides when a payment is actually attempted '
                  'against this supplier, because the destination it judges is '
                  'the one on the payout — never the one typed in the email.'
                  '</div>')
         body += "</div>"
 
-    return _page(f"PayeeProof — {subject}", body)
+    return _page(f"BaseDrift — {subject}", body)
 
 
 STATE_CLASS = {
@@ -816,7 +829,7 @@ def render_case(a: Optional[Dict[str, Any]], case=None, actor: str = "",
         body = _header("not found")
         body += ('<div class="empty">No decision recorded for that payout.'
                  '<br><a href="/">Back to decisions</a></div>')
-        return _page("PayeeProof — not found", body)
+        return _page("BaseDrift — not found", body)
 
     actions = list(case or [])
     actor = actor or casefile.OPERATORS[0][0]
@@ -972,4 +985,4 @@ def render_case(a: Optional[Dict[str, Any]], case=None, actor: str = "",
     body += ('<p class="note">Action plans. Nothing in this repository calls '
              'Razorpay.</p></div>')
 
-    return _page(f"PayeeProof — {a.get('payout_id')}", body)
+    return _page(f"BaseDrift — {a.get('payout_id')}", body)

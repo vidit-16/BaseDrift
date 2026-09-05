@@ -1,8 +1,8 @@
-# PayeeProof
+# BaseDrift
 
 **A verified bank account and a verified account holder are not proof that a beneficiary change was authorized.**
 
-PayeeProof is a pre-authorization decision layer for RazorpayX payouts. It intercepts at the `payout.pending` webhook — while the payout is frozen and no money has moved — verifies the *authorization provenance* of the proposed destination against the merchant's own vendor master, and resolves to Razorpay's native approve/reject endpoints.
+BaseDrift is a pre-authorization decision layer for RazorpayX payouts. It intercepts at the `payout.pending` webhook — while the payout is frozen and no money has moved — verifies the *authorization provenance* of the proposed destination against the merchant's own vendor master, and resolves to Razorpay's native approve/reject endpoints.
 
 **Precisely:** the decision layer, the webhook handler and the evaluation are real and run. The RazorpayX side is not connected — the engine emits the approve/reject/deactivate calls as action plans, and nothing in this repository executes them. See [What is real and what is simulated](#what-is-real-and-what-is-simulated).
 
@@ -60,11 +60,11 @@ Reverse Penny Drop doesn't close it either. RPD requires the account holder to s
 | Reverse Penny Drop | The account holder's identity, via their own UPI payment | Whether they are your vendor, or authorized this change |
 | Approval Workflow | An internal role approved the payout | Whether the external vendor authorized the change |
 | Source to Pay | Vendor onboarded in-portal with verified GSTIN | Whether an out-of-band email requesting a change is genuine |
-| **PayeeProof** | **Authorization provenance of the change request** | — |
+| **BaseDrift** | **Authorization provenance of the change request** | — |
 
-### The bypass PayeeProof survives
+### The bypass BaseDrift survives
 
-Razorpay's Approval Workflow can be disabled **for API payouts only**, and on disabling *"all the payouts in pending state are rejected automatically and the payouts are processed without approval."* A compromised integration with API credentials skips human review entirely. PayeeProof runs at the webhook layer and is unaffected by that toggle.
+Razorpay's Approval Workflow can be disabled **for API payouts only**, and on disabling *"all the payouts in pending state are rejected automatically and the payouts are processed without approval."* A compromised integration with API credentials skips human review entirely. BaseDrift runs at the webhook layer and is unaffected by that toggle.
 
 ---
 
@@ -262,7 +262,7 @@ python src/webhook_demo.py    # five signed scenarios over real HTTP
 The dashboard:
 
 ```
-$env:PAYEEPROOF_SEED_DEMO="1"          # populate it on startup
+$env:BASEDRIFT_SEED_DEMO="1"          # populate it on startup
 $env:RAZORPAY_WEBHOOK_SECRET="whsec_demo"
 uvicorn webhook_app:app --app-dir src --port 8000
 ```
@@ -276,30 +276,30 @@ it is why the provider is configuration rather than code.
 
 | variable | what it does |
 |---|---|
-| `PAYEEPROOF_BASE_URL` | provider root, OpenAI-compatible. Defaults to Groq |
-| `PAYEEPROOF_API_KEY` | key for that provider. Falls back to `GROQ_API_KEY` |
-| `PAYEEPROOF_MODEL` | pin a model id, skipping detection |
-| `PAYEEPROOF_PROVIDER` | routing layers only: the host(s) allowed to serve the model, comma separated and tried in order. No host outside the list can serve a call |
-| `PAYEEPROOF_CALL_GAP` | seconds between calls. Default 7.0 |
+| `BASEDRIFT_BASE_URL` | provider root, OpenAI-compatible. Defaults to Groq |
+| `BASEDRIFT_API_KEY` | key for that provider. Falls back to `GROQ_API_KEY` |
+| `BASEDRIFT_MODEL` | pin a model id, skipping detection |
+| `BASEDRIFT_PROVIDER` | routing layers only: the host(s) allowed to serve the model, comma separated and tried in order. No host outside the list can serve a call |
+| `BASEDRIFT_CALL_GAP` | seconds between calls. Default 7.0 |
 
-**`PAYEEPROOF_CALL_GAP` is the one to change first.** 7 seconds exists to stay
+**`BASEDRIFT_CALL_GAP` is the one to change first.** 7 seconds exists to stay
 under Groq's free-tier per-minute ceiling. Anywhere else it adds 93 minutes to
 an 800-case run for nothing.
 
 Windows, PowerShell — persists across reboots:
 
 ```
-[Environment]::SetEnvironmentVariable("PAYEEPROOF_API_KEY", "sk-...", "User")
-[Environment]::SetEnvironmentVariable("PAYEEPROOF_BASE_URL", "https://openrouter.ai/api/v1", "User")
-[Environment]::SetEnvironmentVariable("PAYEEPROOF_CALL_GAP", "0.5", "User")
+[Environment]::SetEnvironmentVariable("BASEDRIFT_API_KEY", "sk-...", "User")
+[Environment]::SetEnvironmentVariable("BASEDRIFT_BASE_URL", "https://openrouter.ai/api/v1", "User")
+[Environment]::SetEnvironmentVariable("BASEDRIFT_CALL_GAP", "0.5", "User")
 ```
 
 macOS or Linux:
 
 ```
-export PAYEEPROOF_API_KEY="sk-..."
-export PAYEEPROOF_BASE_URL="https://openrouter.ai/api/v1"
-export PAYEEPROOF_CALL_GAP="0.5"
+export BASEDRIFT_API_KEY="sk-..."
+export BASEDRIFT_BASE_URL="https://openrouter.ai/api/v1"
+export BASEDRIFT_CALL_GAP="0.5"
 ```
 
 **A gotcha that cost an hour.** `SetEnvironmentVariable(..., "User")` writes to
@@ -309,7 +309,7 @@ for the current session.
 
 Known-good settings, all running the same weights:
 
-| provider | `PAYEEPROOF_BASE_URL` | model id | 900 calls |
+| provider | `BASEDRIFT_BASE_URL` | model id | 900 calls |
 |---|---|---|---|
 | OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-oss-120b` | ~$0.12 |
 | Groq | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` | ~$0.42 |
@@ -349,7 +349,7 @@ destination, and authorization provenance is the entire question here. Two
 inputs are needed and only one arrives on the webhook.
 
 The merchant's AP system supplies the other via `POST /documents`. Correlation
-prefers an explicit `notes.payeeproof_document_id` on the payout, falls back to
+prefers an explicit `notes.basedrift_document_id` on the payout, falls back to
 the most recent document for that vendor inside a 30-day window, and otherwise
 finds nothing.
 
@@ -376,7 +376,7 @@ at the integration boundary.
 
 The safe state is inaction. A pending payout stays pending until something
 explicitly approves it, so every failure — bad signature, unknown fund account,
-unknown vendor, unreadable document, a crashed process, PayeeProof being down
+unknown vendor, unreadable document, a crashed process, BaseDrift being down
 entirely — leaves the money where it is. There is no code path that releases a
 payout on error, which is why a 500 is an acceptable response: Razorpay retries,
 and nothing has moved in the meantime.
@@ -384,14 +384,14 @@ and nothing has moved in the meantime.
 ### Telling the merchant's systems how it ended
 
 The inbound webhook is Razorpay saying a payout is pending. The outbound one is
-PayeeProof saying a held payout was released or refused, and by whom — otherwise
+BaseDrift saying a held payout was released or refused, and by whom — otherwise
 an ERP can only learn the outcome by someone watching the dashboard.
 
 ```
 POST https://your-erp/hook
-X-PayeeProof-Signature: <hmac-sha256 of the exact body, PAYEEPROOF_WEBHOOK_SECRET>
+X-BaseDrift-Signature: <hmac-sha256 of the exact body, BASEDRIFT_WEBHOOK_SECRET>
 
-{"event": "payeeproof.case.released",
+{"event": "basedrift.case.released",
  "payload": {"case": {
     "payout_id": "pout_1", "resolution": "released",
     "resolved_by": "Rahul Iyer", "rule_fired": "R5_tier1_inconclusive",
@@ -399,7 +399,7 @@ X-PayeeProof-Signature: <hmac-sha256 of the exact body, PAYEEPROOF_WEBHOOK_SECRE
                 {"action": "released",           "actor": "Rahul Iyer",  ...}]}}}
 ```
 
-Configured with `PAYEEPROOF_WEBHOOK_URL` and `PAYEEPROOF_WEBHOOK_SECRET`; with
+Configured with `BASEDRIFT_WEBHOOK_URL` and `BASEDRIFT_WEBHOOK_SECRET`; with
 no URL it does nothing and says nothing.
 
 **It fires only on `released` and `rejected`.** Intermediate states are not facts
@@ -479,13 +479,13 @@ What the rules actually buy is measured against that null baseline:
 | null — hold everything, no rules | 100% | 87.1% | 100% | 0.0% |
 | block everything | 100% | 50.8% | 0% | 100% |
 | allow everything | 0% | 0% | 0% | 0.0% |
-| **PayeeProof** | **100%** | **89.3%** | **79.3%** | **0.0%** |
+| **BaseDrift** | **100%** | **89.3%** | **79.3%** | **0.0%** |
 
 Measured on the dev split, 624 cases. The holdout agrees: 100% / 87.4% / 79.3%
 / 0.0%.
 
 With both verification channels running, no fraud case in the dev split is
-released — by PayeeProof or by the do-nothing baseline, which also catches
+released — by BaseDrift or by the do-nothing baseline, which also catches
 sim-swap once it can run a penny drop. So recall ties, and the rules' measurable
 contribution is operational: **20.7% of payouts release with no phone call at
 all**, and none of the traffic is rejected outright.
@@ -995,7 +995,7 @@ authentication in front of it wherever it is actually deployed, exactly as
 The store starts **empty** by default, which resolves no fund accounts and
 therefore holds every payout. That is the right default for a control whose safe
 state is inaction: a deployment that has not been given vendor data must not
-begin approving things. `PAYEEPROOF_SEED_DEMO=1` loads the demo fixtures, and
+begin approving things. `BASEDRIFT_SEED_DEMO=1` loads the demo fixtures, and
 has to be set deliberately.
 
 ---
@@ -1191,7 +1191,7 @@ change and traffic that does not, and the two behave nothing alike:
 Real traffic is overwhelmingly the first row, and the null baseline holds all of
 it. At 20,000 payouts/day with 0.2% carrying a change:
 
-| per day | PayeeProof | hold everything |
+| per day | BaseDrift | hold everything |
 |---|---|---|
 | released with no call | **19,750** | 0 |
 | held, a human must act | **250** | 20,000 |
@@ -1335,7 +1335,7 @@ to a provider, so bringing inference in-country is a one-file change.
 
 ## Scope boundary
 
-PayeeProof protects an **already-onboarded** vendor from having a payout redirected via a compromised or spoofed change request. It does not address a wholly fraudulent vendor being onboarded — that is onboarding fraud, a different pattern, and the vendor master is a trust boundary here.
+BaseDrift protects an **already-onboarded** vendor from having a payout redirected via a compromised or spoofed change request. It does not address a wholly fraudulent vendor being onboarded — that is onboarding fraud, a different pattern, and the vendor master is a trust boundary here.
 
 The vendor master's own update path needs equivalent protection in production. The same principle applies recursively: a master-record update should be confirmed via the *existing* known contact, never via details supplied in the request.
 
@@ -1384,7 +1384,7 @@ was available. It is the only thing that *can* be built before an account
 exists, and the honest next rung is shadow mode against a willing merchant —
 deciding nothing, logging what it would have done.
 
-FAV results are replayed schema-faithfully from Razorpay's documented response shape — never presented as live calls. The decision layer is entirely PayeeProof's own logic.
+FAV results are replayed schema-faithfully from Razorpay's documented response shape — never presented as live calls. The decision layer is entirely BaseDrift's own logic.
 
 **Failure recovery.** Razorpay auto-rejects payouts left pending beyond ~3 months, so a hold cannot sit forever; verification carries a bounded attempt count with explicit escalation. Extraction failure, FAV unavailability, and callback timeout all resolve to hold — never to auto-release.
 

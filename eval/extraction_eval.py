@@ -1,5 +1,5 @@
 """
-PayeeProof — extraction evaluation.
+BaseDrift — extraction evaluation.
 
 eval/rules_eval.py measures the DECISION ENGINE given perfect evidence. This
 measures what the extractor actually recovers from prose, which is the gap
@@ -51,7 +51,7 @@ import render as R  # noqa: E402
 import verifier  # noqa: E402
 from ablation import keyword_baseline  # noqa: E402
 from decision_engine import ALLOW, BLOCK, STEP_UP, FAVResult, decide  # noqa: E402
-from rules_eval import load_cases, load_vendors, payeeproof  # noqa: E402
+from rules_eval import load_cases, load_vendors, basedrift  # noqa: E402
 
 CACHE_DIR = os.path.join(HERE, ".extraction_cache")
 PROMPT_HASH = hashlib.sha256(E.SYSTEM_PROMPT.encode()).hexdigest()[:12]
@@ -340,7 +340,7 @@ def compute_outcomes(cases, extractions, rows_by_id, vendors, index):
                         split_below=row["split_below_threshold"] == "True",
                         destination_account_number=row["proposed_account_number"],
                         vendors=vendors)
-        d_ideal = payeeproof(row, vendor, index, vendors)
+        d_ideal = basedrift(row, vendor, index, vendors)
 
         reached = row["callback_reaches_known_contact"] == "True"
         # The accounts the requester can actually send from. Which one gets
@@ -426,7 +426,7 @@ def main():
         model, err = llm_client.detect_model()
         if err:
             raise SystemExit(f"cannot reach the model: {err}\n"
-                             f"PAYEEPROOF_API_KEY (or GROQ_API_KEY) must be set in "
+                             f"BASEDRIFT_API_KEY (or GROQ_API_KEY) must be set in "
                              f"THIS shell.")
     print(f"model {model}   scoring {len(cases)} case(s)   runs {args.runs}")
     print()

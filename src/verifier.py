@@ -1,5 +1,5 @@
 """
-PayeeProof — verifier.py
+BaseDrift — verifier.py
 
 Handles the STEP_UP_VERIFY path and emits the RazorpayX API actions
 a decision maps to.
@@ -437,7 +437,7 @@ def razorpay_actions(outcome: str,
       POST  /v1/payouts/{id}/reject
       PATCH /v1/fund_accounts/{id}   {"active": false}
     """
-    remarks = f"PayeeProof: {reason[:180]}"
+    remarks = f"BaseDrift: {reason[:180]}"
 
     if outcome == ALLOW:
         return [{

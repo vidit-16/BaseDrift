@@ -1,5 +1,5 @@
 """
-PayeeProof — pipeline.py
+BaseDrift — pipeline.py
 
 One function that runs a case end to end and returns a full audit record.
 
@@ -322,9 +322,9 @@ def demo():
         print()
         print("This demo deliberately refuses to print a verdict without it.")
         print("A payout held because extraction failed is not a detection, and")
-        print("presenting it as one would misrepresent what PayeeProof does.")
+        print("presenting it as one would misrepresent what BaseDrift does.")
         print()
-        print('  PowerShell:  $env:PAYEEPROOF_API_KEY="sk-or-..."')
+        print('  PowerShell:  $env:BASEDRIFT_API_KEY="sk-or-..."')
         print("  An existing GROQ_API_KEY is still read, so nothing breaks.")
         print()
         print("Free key, no credit card: console.groq.com")
@@ -333,7 +333,7 @@ def demo():
 
     print()
     print("=" * 72)
-    print("PayeeProof — hero case")
+    print("BaseDrift — hero case")
     print("Every bank-level check passes. Change authorization is absent.")
     print("=" * 72)
     print()

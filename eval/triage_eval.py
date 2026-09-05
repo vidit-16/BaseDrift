@@ -1,5 +1,5 @@
 """
-PayeeProof — triage evaluation.
+BaseDrift — triage evaluation.
 
 Runs the funnel over a synthetic AP inbox and reports what it costs and what it
 loses. No API key: the classifier stage falls back to its deterministic

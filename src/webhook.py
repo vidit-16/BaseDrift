@@ -1,15 +1,15 @@
 """
-PayeeProof — payout.pending webhook handler.
+BaseDrift — payout.pending webhook handler.
 
 This is the integration point the README's first paragraph describes: RazorpayX
 fires `payout.pending` while the payout is frozen and no money has moved, and
-PayeeProof decides before it thaws.
+BaseDrift decides before it thaws.
 
 FAIL-SAFE BY CONSTRUCTION
 =========================
 The safe state is INACTION. A pending payout stays pending until something
 explicitly approves it, so every failure mode here — bad signature, unknown
-fund account, unknown vendor, missing document, crashed process, PayeeProof
+fund account, unknown vendor, missing document, crashed process, BaseDrift
 being down entirely — leaves the payout held. There is no code path where an
 error releases money. That is why the handler never "defaults to approve" on
 anything, and why a 500 is an acceptable outcome: Razorpay retries, and the
@@ -18,14 +18,14 @@ payout is safe in the meantime.
 THE CORRELATION PROBLEM, AND WHY IT IS NOT HAND-WAVED
 =====================================================
 A payout.pending event tells you money is about to move. It does NOT tell you
-what document requested that destination — and PayeeProof's whole question is
+what document requested that destination — and BaseDrift's whole question is
 about the provenance of a change request. Two sources are needed, and only one
 arrives on the webhook.
 
 The merchant's AP system supplies the other, via POST /documents. Correlation
 then runs in this order:
 
-  1. payout.notes.payeeproof_document_id  — an explicit reference, unambiguous
+  1. payout.notes.basedrift_document_id  — an explicit reference, unambiguous
   2. the most recent document for that vendor inside CORRELATION_WINDOW_DAYS
   3. nothing found
 
@@ -64,7 +64,7 @@ import casefile
 import notifier
 import verifier
 
-log = logging.getLogger("payeeproof.webhook")
+log = logging.getLogger("basedrift.webhook")
 
 SIGNATURE_HEADER = "X-Razorpay-Signature"
 EVENT_ID_HEADER = "x-razorpay-event-id"
@@ -617,7 +617,7 @@ def handle_payout_pending(raw_body: bytes,
                              f"vendor {fa.vendor_id}; payout left pending")
 
     # 5. Correlate the change-request document.
-    explicit = evt.notes.get("payeeproof_document_id")
+    explicit = evt.notes.get("basedrift_document_id")
     doc = store.find_document(vendor.vendor_id, explicit)
 
     if doc is None:
@@ -720,7 +720,7 @@ def create_app(store: Optional[Store] = None, fav_lookup=None):
 
     import dashboard
 
-    app = FastAPI(title="PayeeProof", version="1.0")
+    app = FastAPI(title="BaseDrift", version="1.0")
     app.state.store = store if store is not None else Store()
 
     @app.post("/webhooks/razorpay")
@@ -756,7 +756,7 @@ def create_app(store: Optional[Store] = None, fav_lookup=None):
         Where the merchant's AP system posts a change-request document.
 
         This is the second input the webhook cannot supply. Returns the id to
-        put in the payout's notes.payeeproof_document_id for exact correlation.
+        put in the payout's notes.basedrift_document_id for exact correlation.
         """
         body = await request.json()
         doc_id = body.get("document_id") or f"doc_{int(time.time()*1000)}"

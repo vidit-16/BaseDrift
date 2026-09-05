@@ -18,7 +18,7 @@ step, not something this file should guess at.
 
 FOR A DEMO
 ==========
-    set PAYEEPROOF_SEED_DEMO=1
+    set BASEDRIFT_SEED_DEMO=1
 
 Loads the five scenarios from webhook_demo.py and decides them at startup, so
 the dashboard has something in it when it opens. Off by default and never a
@@ -58,7 +58,7 @@ def _seed(store, secret):
     return demo
 
 
-if os.environ.get("PAYEEPROOF_SEED_DEMO") == "1":
+if os.environ.get("BASEDRIFT_SEED_DEMO") == "1":
     import webhook_demo as _demo
 
     _secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET") or _demo.SECRET

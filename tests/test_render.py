@@ -1,5 +1,5 @@
 """
-PayeeProof — renderer tests.
+BaseDrift — renderer tests.
 
 Two properties carry the whole extraction evaluation:
 
