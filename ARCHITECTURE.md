@@ -37,35 +37,49 @@ channel they do not control, ask for this?**
 
 ## 2. Where it sits
 
-```
-Out-of-band change request (email / invoice / message)
-                    │
-        ┌───────────▼───────────┐
-        │  Semantic LLM layer   │  intent / action / scope / pressure
-        │  EVIDENCE, not a      │  normalises meaning, not keywords
-        │  decision             │
-        └───────────┬───────────┘
-                    │
-   ┌────────────────┼────────────────┬──────────────────┐
-   │                │                │                  │
-Vendor master   FAV replay    Change lineage    Cross-contact
-(trusted        (bank truth)  (add vs replace)  account reuse
- identity)
-   └────────────────┼────────────────┴──────────────────┘
-                    │
-          Authorization evidence
-                    │
-        Deterministic policy engine        ← no LLM here
-                    │
-            ALLOW  /  STEP_UP_VERIFY
-                    │            ╲
-                    │         (+ recommended_action="reject")
-                    │
-   POST  /v1/payouts/{id}/approve
-   POST  /v1/payouts/{id}/reject     ← human confirms
-   PATCH /v1/fund_accounts/{id}      ← human confirms
-                    │
-              Audit trail  →  outbound webhook on resolution
+```mermaid
+flowchart LR
+    REQ["<b>Change request</b><br/><i>email · invoice · message</i>"]
+    LLM["<b>Semantic LLM layer</b><br/>intent · action · scope · pressure<br/><i>evidence, not a decision</i>"]
+
+    subgraph EV ["authorization evidence"]
+        direction TB
+        VM["Vendor master<br/><i>trusted identity</i>"]
+        FAV["FAV replay<br/><i>bank truth</i>"]
+        LIN["Change lineage<br/><i>add vs replace</i>"]
+        XC["Cross-contact<br/><i>account reuse</i>"]
+        VM ~~~ FAV ~~~ LIN ~~~ XC
+    end
+
+    ENGINE{"<b>Deterministic policy engine</b><br/><i>no LLM here</i>"}
+    ALLOW["<b>ALLOW</b>"]
+    STEP["<b>STEP_UP_VERIFY</b>"]
+    REC["<i>+ recommended_action</i><br/><b>= reject</b>"]
+    API["<b>POST</b> /payouts/{id}/approve<br/><b>POST</b> /payouts/{id}/reject<br/><b>PATCH</b> /fund_accounts/{id}<br/><i>the last two wait for a human</i>"]
+    AUDIT[("Audit trail<br/><i>outbound webhook<br/>on resolution</i>")]
+
+    REQ --> LLM --> EV --> ENGINE
+    ENGINE --> ALLOW
+    ENGINE --> STEP
+    ENGINE --> REC
+    REC --> STEP
+    ALLOW --> API
+    STEP --> API
+    API --> AUDIT
+
+    classDef model fill:#2f8f86,stroke:#7fded4,stroke-width:2px,color:#ffffff
+    classDef engine fill:#a8760d,stroke:#f2c66b,stroke-width:3px,color:#ffffff
+    classDef good fill:#2f7d55,stroke:#7fdca6,stroke-width:2px,color:#ffffff
+    classDef hold fill:#a35a12,stroke:#f0a860,stroke-width:2px,color:#ffffff
+    classDef danger fill:#a13330,stroke:#f08a86,stroke-width:2px,color:#ffffff
+    classDef plain fill:#3b4754,stroke:#8b9bab,stroke-width:1px,color:#ffffff
+
+    class LLM model
+    class ENGINE engine
+    class ALLOW good
+    class STEP hold
+    class REC danger
+    class REQ,VM,FAV,LIN,XC,API,AUDIT plain
 ```
 
 The interception point is deliberate. At `payout.pending` the payout exists, is

@@ -120,7 +120,7 @@ unaffected by that toggle.
 
 ```mermaid
 flowchart LR
-    REQ["📧 <b>Change request</b><br/><i>email · invoice · message</i>"]
+    REQ["<b>Change request</b><br/><i>email · invoice · message</i>"]
     LLM["<b>Semantic layer</b><br/><i>the only LLM call</i><br/>intent · action · scope<br/><i>evidence, never a decision</i>"]
 
     subgraph EV ["what the engine reads"]
@@ -133,11 +133,11 @@ flowchart LR
     end
 
     ENGINE{"<b>Rule engine</b><br/>R1–R7<br/><i>no LLM here</i>"}
-    ALLOW["✅ <b>Release</b>"]
-    HOLD["⏸️ <b>Hold</b><br/><i>the harshest automatic<br/>outcome there is</i>"]
-    REC["⚠️ <i>+ recommend reject</i><br/><b>a human decides</b>"]
+    ALLOW["<b>Release</b>"]
+    HOLD["<b>Hold</b><br/><i>the harshest automatic<br/>outcome there is</i>"]
+    REC["<i>+ recommend reject</i><br/><b>a human decides</b>"]
     VERIFY["<b>Verification</b><br/>callback · ₹1 from a<br/>named account"]
-    HUMAN["👥 <b>Two people</b><br/><i>whoever verifies<br/>cannot release</i>"]
+    HUMAN["<b>Two people</b><br/><i>whoever verifies<br/>cannot release</i>"]
 
     REQ --> LLM --> EV --> ENGINE
     ENGINE -->|"R2a · R7"| ALLOW
@@ -163,10 +163,10 @@ flowchart LR
 **Read it in one line:** the model turns an email into evidence, and a rule
 table with no model in it decides what happens to the money.
 
-**Two arrows are the whole design.** Nothing reaches ✅ ALLOW without the
+**Two arrows are the whole design.** Nothing reaches ALLOW without the
 payout's real destination matching the vendor master — so no model output can
 release a payment on its own. And nothing reaches a rejection without a person:
-⚠️ is a *recommendation* attached to a hold, never an action.
+a rejection recommendation is a *recommendation* attached to a hold, never an action.
 
 **The LLM never decides.** It converts unstructured communication into
 structured semantic evidence; a deterministic rule engine makes the money

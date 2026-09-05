@@ -65,6 +65,17 @@ jobs:
         if: matrix.python-version == '3.12'
         run: python tools/mutate.py
 
+      - name: Documents must agree with the repository, and with each other
+        # The most persistent defect here has never been a bug. It is a figure
+        # that was true when written: a 278-case holdout quoted for a corpus
+        # regenerated into 276, a page count of 205 against 325 on disk, an
+        # inbox of 7,176 against 25,584. Ten of them at once, none caught,
+        # because prose is not executable. This makes it executable.
+        run: python tools/consistency.py
+
+      - name: The recording script fits in five minutes
+        run: python tools/script_time.py
+
       - name: Keyword baseline must stay beaten
         run: python eval/ablation.py
 

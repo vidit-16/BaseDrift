@@ -13,6 +13,10 @@ holds the translation so the two can never drift.
 [`src/decision_engine.py`](src/decision_engine.py), and the code implements
 exactly it.** This document is that table with its reasoning attached.
 
+**[← README](README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
+
+---
+
 ---
 
 ## The shape of the thing
@@ -211,20 +215,20 @@ is the decision, and nothing below it runs.
 ```mermaid
 flowchart TD
     START(["payout.pending"]) --> R1{"R1<br/>extraction failed?"}
-    R1 -->|yes| HOLD1["⏸️ hold"]
+    R1 -->|yes| HOLD1["hold"]
     R1 -->|no| R2{"R2<br/>claims no change?"}
-    R2 -->|"destination known"| OK1["✅ release"]
-    R2 -->|"destination unknown"| HOLD2["⏸️ hold"]
-    R2 -->|"another vendor's account"| REJ1["⏸️ hold + recommend reject"]
+    R2 -->|"destination known"| OK1["release"]
+    R2 -->|"destination unknown"| HOLD2["hold"]
+    R2 -->|"another vendor's account"| REJ1["hold + recommend reject"]
     R2 -->|"a change is requested"| R3{"R3<br/>any Tier 1 FAIL?"}
-    R3 -->|yes| REJ2["⏸️ hold + recommend reject"]
+    R3 -->|yes| REJ2["hold + recommend reject"]
     R3 -->|no| R4{"R4<br/>replace + new account<br/>+ deception<br/>+ independent Tier 2 warn?"}
-    R4 -->|yes| REJ3["⏸️ hold + recommend reject"]
+    R4 -->|yes| REJ3["hold + recommend reject"]
     R4 -->|no| R5{"R5<br/>any Tier 1<br/>WARN / INCONCLUSIVE?"}
-    R5 -->|yes| HOLD3["⏸️ hold"]
+    R5 -->|yes| HOLD3["hold"]
     R5 -->|no| R6{"R6<br/>any Tier 2<br/>WARN / INCONCLUSIVE?"}
-    R6 -->|yes| HOLD4["⏸️ hold"]
-    R6 -->|no| OK2["✅ release — R7, all clear"]
+    R6 -->|yes| HOLD4["hold"]
+    R6 -->|no| OK2["release — R7, all clear"]
 
     classDef good fill:#4caf7d,stroke:#1f6b45,color:#04220f
     classDef hold fill:#e08a3c,stroke:#9c4f10,color:#2b1300

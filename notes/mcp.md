@@ -4,6 +4,10 @@ Written to be picked up cold. Everything below came out of working through what
 `mcp/inbox_server.py` actually is, and it ends in a decision that has not been
 made.
 
+**[← back to the project](../README.md)** · **[other working notes](README.md)**
+
+---
+
 **Short version:** the MCP layer is a well-shaped seam with nothing plugged into
 it. That is defensible if described accurately and indefensible if oversold.
 
@@ -18,7 +22,7 @@ word for one of them.
 |---|---|---|
 | **Host** | the AI application | `src/investigator.py` |
 | **Client** | lives in the host, holds one connection to one server | **missing** |
-| **Server** | exposes data and tools | `mcp/inbox_server.py` ✅ |
+| **Server** | exposes data and tools | `mcp/inbox_server.py` |
 | **Transport** | how the bytes move | **missing** |
 
 **"Connector" is not a spec term.** It is Anthropic's product word for a
@@ -71,7 +75,7 @@ Three properties are real, enforced in code, and asserted by tests:
 
 - **No client, no transport.** Nothing external can connect. The agent calls the
   Python methods directly, in-process.
-- **No real mailbox.** `from_csv()` reads `data/inbox_dev.csv` — 7,176 synthetic
+- **No real mailbox.** `from_csv()` reads `data/inbox_dev.csv` — 25,584 synthetic
   messages from `data/generate_inbox.py`. There is no Gmail or Microsoft 365
   connection, broken or otherwise.
 - **No model chooses anything.** `inbox_signals.collect()` calls the same three
@@ -229,7 +233,7 @@ difference between a judge seeing the system work and reading about it.
 1. `pip install mcp`, add it to `requirements.txt` **as an optional extra**. The
    test suite must keep running without it; CI installs requirements and has no
    API key, and a hard dependency would put a transport library in the path of
-   221 tests that do not need one.
+   the whole test suite, none of which needs one.
 2. New file `mcp/serve.py` — the transport only. Import `InboxServer`, register
    the five existing functions, run over stdio. Do **not** reimplement the tools;
    `TOOLS` already holds the descriptors a `tools/list` response needs.

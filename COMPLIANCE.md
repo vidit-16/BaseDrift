@@ -1,4 +1,4 @@
-# Compliance posture
+# BaseDrift — Compliance posture
 
 What a production deployment of BaseDrift would have to satisfy, what the
 design already satisfies, and what it does not.
@@ -172,7 +172,7 @@ change once during development, which is the argument.
 **2. Retention and erasure.** *(surface grew with the inbox work)*
 `raw_llm_output` keeps 1000 characters of the model's parse; the document store
 keeps full email bodies; the audit trail keeps both. The inbox layer added more:
-`InboxServer` holds every message body it serves — 7,176 in the corpus
+`InboxServer` holds every message body it serves — 25,584 in the corpus
 configuration — and documents now also carry the inbox signals and triage
 metadata gathered at ingest. All indefinitely, in memory, unencrypted. DPDP requires storage limitation and erasure on request, and the
 audit trail is simultaneously a compliance *requirement* and a personal-data

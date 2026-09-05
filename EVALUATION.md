@@ -310,7 +310,8 @@ overlap. The first corpus was a different dataset, not a narrower one.
 | declared groups in the master | **1** | **20** |
 | groups sharing an account | **1** | **14** |
 
-**Every one of the 216 tests passed on the broken corpus.** Both evals ran
+**Every one of the 216 tests in the suite at the time passed on the broken
+corpus.** Both evals ran
 clean, the generator was byte-identical across two runs, and the leakage guard
 reported 0/551. One declared group *is* a structurally valid vendor master.
 Nothing asserted that the corpus contained *enough* of a scenario to measure it

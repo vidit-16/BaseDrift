@@ -3,6 +3,10 @@
 Written to be picked up cold. Not built yet; this is the design and the reasons,
 including one security finding that changes what the key has to be.
 
+**[← back to the project](../README.md)** · **[other working notes](README.md)**
+
+---
+
 **Short version:** the system re-reads the whole mailbox on every run and forgets
 what it processed when it restarts. The fix is a watermark plus a bounded
 seen-set, in a SQLite table attached to the system, keyed on the
@@ -21,7 +25,7 @@ becomes a swap rather than a rewrite.
 
 Both in memory. Both forgotten on restart. Two consequences:
 
-- **Re-processing.** `MCP.from_csv()` loads all 7,176 rows every time and
+- **Re-processing.** `MCP.from_csv()` loads all 25,584 rows every time and
   `Store.ingest_message()` decides freshness from a set that started empty. A
   restart re-ingests everything and creates a second document for messages
   already handled.
