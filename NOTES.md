@@ -2092,6 +2092,58 @@ V2.P2 THREE CORPUS BUGS THE MEASUREMENTS WERE HIDING
       Three of these four were fixed without changing a line of src/.
 
 
+V2.Q  THE RENAME, AND A SNAPSHOT THAT HAD STOPPED BEING A SNAPSHOT
+
+      PayeeProof is a shipping product doing pre-send verification for
+      stablecoin transfers. Same two words, adjacent purpose; anyone looking
+      for one would land on the other. Renamed to BaseDrift: the vendor master
+      is the base a supplier has been paid from, and fraud is drift away from
+      it.
+
+      218 occurrences, 42 files, three casings, plus ten PAYEEPROOF_* env vars.
+      Two things were worth doing deliberately rather than mechanically.
+
+      1  THE HEADER A BLIND SUBSTITUTION WOULD HAVE MISSED. The dashboard
+         renders "Payee<span>Proof</span>" — the string never appears intact,
+         so a replace of the plain name leaves it half-renamed and the page
+         title stays wrong. Substituting the split form FIRST, then the plain
+         one, catches it. Found by listing the variants before writing the
+         script rather than by reading the result afterwards.
+
+      2  THE PROMPT HASH WAS THE REAL RISK, AND IT WAS CHECKED, NOT ASSUMED.
+         The extraction cache is keyed on the prompt hash. If the project name
+         appeared anywhere inside the prompt, renaming would have invalidated
+         every cached extraction and cost a full re-extraction. It appears in
+         extractor.py only in a docstring and a CLI print, and the hash is
+         still b91cb054b107 after the rename. Verified before committing,
+         because the failure mode is silent — the next eval just starts
+         calling the API.
+
+      NO FALLBACK TO THE OLD ENV NAMES, on purpose. A rename that keeps
+      answering to the old name is not a rename, and for a credential in
+      particular, a silent fallback means not knowing which variable is live.
+
+      WHAT THE RENAME EXPOSED. Regenerating docs/ left 74 pages still carrying
+      the old name. They were not missed by the substitution — they were
+      ORPHANS from an earlier run, written when the corpus was smaller and
+      never removed, because tools/snapshot.py wrote pages and pruned nothing.
+      They had been committed and served for weeks, describing cases that no
+      longer exist, and nothing links to them, so the only way to find them
+      was to grep the contents of a folder everyone treats as generated
+      output.
+
+      The rename found them by accident: a stale page is invisible until it
+      disagrees with a live one about something as blunt as the project's
+      name. That is the general shape — generated artefacts that are written
+      but never pruned drift silently, and the drift is only ever discovered
+      by a change that makes the old copies contradict the new ones.
+
+      snapshot.py now deletes .html under docs/ that the run did not write.
+      After all pages are written, so a failed fetch costs one stale page
+      rather than the folder, and never .nojekyll. Rerunning it is a no-op,
+      which is the property that says the folder now equals the corpus.
+
+
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES
 
       (2.1 and 2.5 are DONE — Phase 1. 2.S is the schema decided in Phase 2.)

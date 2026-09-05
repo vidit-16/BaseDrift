@@ -2,6 +2,8 @@
 
 **A verified bank account and a verified account holder are not proof that a beneficiary change was authorized.**
 
+The vendor master is the base: where a supplier has been paid, established over time and under the merchant's own control. Fraud is drift away from it — a destination with no history, no corroboration, and nothing behind the request to move it but the request itself. BaseDrift is what runs before the money does, and it holds anything whose authorization it cannot establish.
+
 BaseDrift is a pre-authorization decision layer for RazorpayX payouts. It intercepts at the `payout.pending` webhook — while the payout is frozen and no money has moved — verifies the *authorization provenance* of the proposed destination against the merchant's own vendor master, and resolves to Razorpay's native approve/reject endpoints.
 
 **Precisely:** the decision layer, the webhook handler and the evaluation are real and run. The RazorpayX side is not connected — the engine emits the approve/reject/deactivate calls as action plans, and nothing in this repository executes them. See [What is real and what is simulated](#what-is-real-and-what-is-simulated).
