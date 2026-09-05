@@ -105,9 +105,9 @@ python tools/mutate.py --list
 **SAY**
 
 > BaseDrift intercepts at the payout-dot-pending webhook — the moment RazorpayX
-> freezes a payout, before money moves. It checks where the payout is actually
-> going against the merchant's own vendor master. The master is the base; fraud
-> is drift away from it.
+> freezes a payout, before money moves. It checks where the money is actually
+> going against the merchant's vendor master. The master is the base; fraud is
+> drift away from it.
 
 ---
 
@@ -216,7 +216,7 @@ case, so you cannot also release it. A different person must."*
 
 ---
 
-## 3:12 — 3:48 · What broke
+## 3:12 — 3:46 · What broke
 
 **ON SCREEN** Tab 5 — navigate to **FINDINGS.md**.
 
@@ -234,11 +234,11 @@ case, so you cannot also release it. A different person must."*
 
 > So I stopped trusting the suite and mutation-tested it. Fifteen deliberate
 > breaks of invariants this project claims out loud. All fifteen killed — an
-> earlier pass found two that weren't, which is the point.
+> earlier pass found two that weren't.
 
 ---
 
-## 3:48 — 4:40 · What the numbers say, and don't
+## 3:46 — 4:42 · What the numbers say, and don't
 
 **ON SCREEN** Tab 5 — README, **At a glance** results table.
 
@@ -246,8 +246,10 @@ case, so you cannot also release it. A different person must."*
 
 **SAY**
 
-> Scored once on a held-out split: a hundred percent of fraud held, zero
-> legitimate payments rejected.
+> Scored once on a held-out split: a hundred percent of fraud held. Twenty
+> legitimate requests held too, out of a hundred and thirty-seven — each of
+> those costs a phone call. Zero rejected, because the engine cannot reach a
+> rejection.
 >
 > But the honest reading is the next column. A pipeline that holds everything
 > and phones every vendor also scores a hundred percent. On accuracy I'm one
@@ -256,22 +258,22 @@ case, so you cannot also release it. A different person must."*
 > The real difference is volume: a couple of hundred held a day, against
 > twenty thousand.
 >
-> And a hundred percent recall is a ceiling, not a result. It means my corpus
-> can't fail, not that the system can't.
+> And a hundred percent recall is a ceiling, not a result — my corpus can't
+> fail, which isn't the same as the system.
 >
 > Nothing here calls Razorpay, either. The pending state doesn't exist in test
-> mode, so the event this is built around can't fire in a sandbox. And it
-> protects vendors you've already onboarded — onboarding fraud is a different
-> problem.
+> mode, so the event this is built around can't fire in a sandbox.
 
-**Delivery:** do not rush this. Volunteering the baseline, the ceiling and the
-missing integration in one breath is the most credible thirty seconds in the
-video. A reviewer who finds any of the three for themselves afterwards
+**Delivery:** do not rush this. It is the beat the Risk Manager track is
+actually judged on — "honest metrics including false-positive cost" — and it is
+the only place you say what a false positive costs. Volunteering the baseline,
+the ceiling and the missing integration in one breath is the most credible
+thirty seconds in the video. A reviewer who finds any of the three for themselves afterwards
 discounts everything else you said.
 
 ---
 
-## 4:40 — 4:57 · Close
+## 4:42 — 4:58 · Close
 
 **ON SCREEN** Back to you, or the title card.
 
@@ -313,6 +315,18 @@ are the credibility of everything else you said.
 
 **Say "held", never "blocked".** The engine cannot reject anything on its own.
 The wrong verb undercuts the design you are demonstrating.
+
+**Scope, if asked — and it is worth having ready.** "It protects vendors you
+have already onboarded. A wholly fraudulent vendor onboarded from scratch is
+onboarding fraud, a different pattern, and the vendor master is a trust
+boundary here." It was cut from the tape because five claims in that beat land
+harder than six, not because it is unflattering.
+
+**Defence-only, if asked.** There is no send capability anywhere in the
+repository -- no SMTP, no mail client, and every MCP inbox tool is read-only
+with a test that fails the build if a write verb appears. The corpus generator
+renders synthetic messages so the extractor can be measured; it has no
+delivery path and no real recipients.
 
 **Don't claim the agent or the MCP layer.** Both exist -- `src/investigator.py`
 and `mcp/inbox_server.py`, read-only and merchant-scoped -- and a rubric that

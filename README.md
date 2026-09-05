@@ -442,6 +442,24 @@ deployability.
 
 ---
 
+## Defensive posture
+
+This system decides whether to **hold money that is already moving**. It has no
+outbound capability of any kind, and that is structural rather than a policy:
+
+| | |
+|---|---|
+| Sending mail | **No SMTP, no mail client, no send function anywhere in the repository.** |
+| Mailbox access | Every MCP inbox tool is read-only. A test greps for write verbs and fails the build if one appears. |
+| Tool arguments | Derived from the message envelope, never its body. A test proves a hostile body produces byte-identical tool calls to a benign one. |
+| The corpus generator | Renders synthetic messages so the extractor can be measured. No delivery path, no real recipients, no real vendors. |
+| The engine's harshest act | A hold. No rule can produce a rejection — a test reads the engine's own source and asserts no `outcome=BLOCK` appears in it, so reintroducing the outcome means reintroducing the literal. |
+
+The scenarios in `data/` describe attacks because a defence has to be measured
+against something. Nothing here performs one.
+
+---
+
 ## Scope boundary
 
 BaseDrift protects an **already-onboarded** vendor from having a payout
