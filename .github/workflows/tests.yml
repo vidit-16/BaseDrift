@@ -50,6 +50,21 @@ jobs:
       - name: Tests
         run: python tests/run_all.py
 
+      - name: Tests again, under -O
+        # python -O strips `assert`, so a guard written as a bare assert
+        # silently disappears under it. inbox_signals.assert_cannot_release was
+        # exactly that, protecting the most attacker-shapeable input in the
+        # system. It raises now, and this step is what keeps it honest.
+        run: python -O tests/run_all.py
+
+      - name: Mutation testing — stated invariants must be enforced, not described
+        # Fifteen deliberate breaks of guarantees this repo makes out loud. A
+        # SURVIVOR means the suite does not actually check that guarantee. One
+        # Python version only: it runs the whole suite once per mutation, and
+        # the result cannot differ by interpreter version.
+        if: matrix.python-version == '3.12'
+        run: python tools/mutate.py
+
       - name: Keyword baseline must stay beaten
         run: python eval/ablation.py
 
