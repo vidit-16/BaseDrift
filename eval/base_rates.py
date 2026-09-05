@@ -30,12 +30,17 @@ scale.
 
 THE UNCERTAINTY, STATED UP FRONT
 ================================
-The routine hold rate is the single most important input here and it rests on
-TWO events across both splits — one in dev, one in holdout. Two. The confidence
-interval around it is enormous, and every daily-volume figure below scales
-linearly with it. Treat the shape of the answer as informative and the precise
-figures as an estimate with a wide band; --routine-hold overrides it so anyone
-can see how sensitive the conclusion is.
+The routine hold rate is the single most important input here, and on the
+current corpus it rests on ZERO events — no routine payout was held across
+either split. The run prints the count it actually used, because that number
+has moved as the corpus changed and a figure typed into a docstring would not.
+
+Zero events does not mean zero rate. It means the corpus is too small to have
+observed one, the confidence interval runs from zero up to roughly 2%, and
+every daily-volume figure below scales linearly across that whole band. Treat
+the SHAPE of the answer as informative and the precise figures as an estimate
+with a very wide band; --routine-hold overrides it so anyone can see how
+sensitive the conclusion is. Setting it to 1% is a reasonable pessimism.
 
 The change-request rate and the fraud rate among change requests are
 ASSUMPTIONS, not measurements. They are defaults drawn from the README's volume
@@ -100,7 +105,11 @@ def main():
     print("BASE RATES — the measured corpus, projected onto real traffic")
     print("=" * 78)
     print()
-    print("  MEASURED (both splits, 800 cases)")
+    total = sum(n for n, _ in combined.values())
+    # Derived, never typed. This line read "800 cases" while the rows
+    # beneath it summed to 900 — a hardcoded count outliving the corpus
+    # it described, which is the same defect this file exists to warn about.
+    print(f"  MEASURED (both splits, {total} cases)")
     for k in sorted(combined):
         n, held = combined[k]
         print(f"    {k:20s} n={n:4d}  held={held:4d}   {held / n:6.1%}")
