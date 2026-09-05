@@ -218,7 +218,16 @@ EXTRACTION RULES
   STATES. proposed_account_number and proposed_ifsc are not: leave those null
   unless the message asks for the destination to change.
 - amount: resolve shorthand — "Rs 3 lakh" -> 300000, "28k" -> 28000
-- urgency_detected: true even when urgency is implied rather than stated (e.g. "month-end closing is tomorrow")
+- urgency_detected: true when the message applies PRESSURE TO ACT BEFORE the
+  buyer has finished checking. Much of that pressure has no clock in it — a
+  named senior person taking an interest, a standing instruction to keep
+  asking, a consequence threatened if the payment does not move. Being hurried
+  is the signal; a date being mentioned is not.
+  Routine chasing of a late payment is NOT urgency. Noting that money has not
+  arrived, restating agreed terms, or asking for an update is what an
+  accounts-payable mailbox is made of, and treating it as pressure marks nearly
+  every supplier as suspicious. The test is whether the sender is trying to
+  compress the buyer's decision, not whether the invoice is overdue.
 - hedging_detected: true if a claim is qualified ("should be", "I think", "same as before")
 - channel_manipulation_detected: true only when the sender narrows WHO CAN
   SEE the exchange — steering it to themselves personally, or off a mailbox

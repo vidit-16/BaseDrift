@@ -2019,6 +2019,79 @@ V2.O  A MEASUREMENT WITH NO NEGATIVES IN IT CANNOT EVALUATE PRECISION, AND I
       the directional definition removes both at source.
 
 
+V2.P2 THREE CORPUS BUGS THE MEASUREMENTS WERE HIDING
+
+      Found by fixing the mailbox's realism, which had nothing to do with any
+      of them. Recorded together because they share a shape: each made a number
+      look better or worse than the system deserved, and none was in the code
+      being measured.
+
+      (a) THE INBOX WAS 7.7% BANK-CHANGE REQUESTS. No accounts-payable mailbox
+          looks like that, and it put fraud at 11.3% of everything triage routed
+          for review. A queue where one message in nine is an attack trains an
+          operator to expect attacks, which is the opposite of the condition
+          this system exists for.
+
+          NOISE_PER_CASE 12 -> 40. Mailbox now 2.4% change requests, 1.2% fraud;
+          review queue 4.1% fraud. The queue stays the same SIZE, because it is
+          dominated either way by ordinary mail quoting an account number.
+
+          The demo loads a day's inbound rather than a fixed 220 — at a
+          realistic ratio the old slice held about one fraudulent request, which
+          makes the queue honest and the demo empty.
+
+      (b) 27 SENDER DOMAINS WERE NOT VALID EMAIL ADDRESSES. LOOKALIKE_SWAPS
+          contained ("a", "@"), producing payments@b@lajitraders.com. Two @
+          signs. It also manufactured every one of the sender_domain "misses":
+          asked for the domain, the model split on @ and returned
+          "lajitraders.com", which is what any parser does, and was scored
+          wrong for it. Removing the swap took sender_domain from 96-97% to
+          100% on both splits WITHOUT TOUCHING THE MODEL.
+
+      (c) A THIRD OF FRAUD CASES HAD A LOOKALIKE DOMAIN THAT WAS NOT ONE.
+          78 of 234. Two causes, both in _lookalike_domain():
+
+            - the swap was applied to the whole domain, so a label with no
+              matching letter got its TLD altered instead (.com -> .c0m).
+              is_lookalike_domain compares registrable labels, so that is not a
+              typosquat to it and is not really one to a reader either.
+            - the fallback appended "-billing", EIGHT edits from the original
+              against LOOKALIKE_MAX_EDITS of 2. Not a typosquat, a different
+              company.
+
+          So those cases carried a scenario saying "attacker uses a lookalike
+          domain" while providing a domain the detector correctly refused to
+          call one. No deception signal, so R4 could not fire on them.
+
+          Now: try every swap against the LABEL, and if none applies double the
+          last character. 0 of 260 undetected.
+
+      WHAT IT DID TO THE NUMBERS, and the honest reading:
+
+                          before    after
+        precision          86.4%    89.3%
+        false hold         15.1%    12.4%
+        R4 fires              58       98
+        recall / falseBLK  100/0    100/0
+
+      THE ENGINE DID NOT IMPROVE. It was being denied evidence the scenario
+      claimed to have given it. Every one of those 78 cases would always have
+      been caught if the domain had been what the label said it was.
+
+      (d) AND THE URGENCY CORPUS WAS FOUR SENTENCES. Recall was 100% against
+          four TIME_PRESSURE templates covering three registers. Ten templates
+          later, across registers with no clock in them at all, recall is ~90%.
+          The 100% was a spelling test with four words.
+
+          Deliberate controls went from 0 to 105. The 62 that existed were
+          ACCIDENTAL — leftover wording in ordinary templates — and an
+          accidental negative asserts nothing about where the line sits.
+
+      THE RULE OUT OF ALL FOUR: when a number looks wrong, check whether the
+      corpus can express the thing being measured before touching the model.
+      Three of these four were fixed without changing a line of src/.
+
+
 V2.X  WHICH BUILDING BLOCK EACH ITEM TOUCHES
 
       (2.1 and 2.5 are DONE — Phase 1. 2.S is the schema decided in Phase 2.)

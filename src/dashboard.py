@@ -307,18 +307,34 @@ def render_index(audits: List[Dict[str, Any]]) -> str:
     body = _header(f"{len(audits)} decisions · {held} not released"
                    + (f" · {rec} recommended for rejection" if rec else ""),
                    "<a href=\"/inbox\">← inbox</a>")
-    body += "<h2>Decisions, newest first</h2><table><thead><tr>"
-    for h in ("Payment", "Supplier", "Destination", "Change request",
-              "Why", "Outcome"):
-        body += f"<th>{h}</th>"
-    body += "</tr></thead><tbody>"
+    # WAITING FIRST, RELEASED SECOND.
+    #
+    # One list newest-first put four payouts that need a person underneath a
+    # hundred and thirty that do not. That ordering was fine when the corpus
+    # was 7.7% change requests; on realistic traffic it buries the entire job.
+    # The inbox already splits this way and the queue should match it: an
+    # operator opens this page to find work, not to read a ledger.
+    waiting = [a for a in audits if not a.get("payout_allowed")]
+    released = [a for a in audits if a.get("payout_allowed")]
 
-    for a in audits:
+    def table(rows, heading, empty):
+        out = f"<h2>{heading}</h2>"
+        if not rows:
+            return out + f'<p class="note">{empty}</p>'
+        out += "<table><thead><tr>"
+        for h in ("Payment", "Supplier", "Destination", "Change request",
+                  "Why", "Outcome"):
+            out += f"<th>{h}</th>"
+        out += "</tr></thead><tbody>"
+        out += "".join(row_html(a) for a in rows)
+        return out + "</tbody></table>"
+
+    def row_html(a):
         d = a.get("decision", {})
         dest = a.get("destination", {})
         doc = a.get("document", {})
         verified = dest.get("source") == "razorpay_fund_account"
-        body += (
+        return (
             "<tr>"
             f"<td class=\"mono\"><a href=\"/case/{_e(a.get('payout_id'))}\">"
             f"{_e(a.get('payout_id'))}</a></td>"
@@ -336,9 +352,14 @@ def render_index(audits: List[Dict[str, Any]]) -> str:
             f"{_recommendation(d)}</td>"
             "</tr>"
         )
-    body += "</tbody></table>"
-    body += ("<p class=\"note\">Every row is a payout that was frozen when the "
-             "decision was made. Open one to see the evidence behind it.</p>")
+
+    body += table(waiting, f"Waiting on a person — {len(waiting)}",
+                  "Nothing is held. Every payout cleared on the evidence.")
+    body += ("<p class=\"note\">Each of these was frozen at "
+             "<code>payout.pending</code> and stays frozen until somebody acts. "
+             "Open one to see the evidence and what would release it.</p>")
+    body += table(released, f"Released — {len(released)}",
+                  "No payouts have been released yet.")
     return _page("PayeeProof — decisions", body)
 
 

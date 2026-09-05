@@ -152,14 +152,33 @@ def test_sender_domain_is_in_the_from_header():
 
 
 def test_pressure_signals_appear_only_when_flagged():
+    """
+    Asserts the templates themselves, not the length.
+
+    It used to compare len(urgent) > len(plain), which held only while an
+    unflagged email had nothing appended. Controls broke that — an unflagged
+    message can now carry "no rush at all, whenever the next run happens is
+    fine", which is longer than some urgency lines and is precisely the point
+    of it existing. The proxy was measuring the wrong thing all along; it just
+    had not been wrong yet.
+    """
+    def has(email, pool):
+        return any(t.format(inv=0, gstin="", amount=0) in email
+                   if "{" in t else t in email for t in pool)
+
     plain = R.render_case(row(case_id="CASE00007"), VENDOR).email
     urgent = R.render_case(row(case_id="CASE00007",
                                urgency_language="True"), VENDOR).email
-    assert len(urgent) > len(plain)
+    assert has(urgent, R.TIME_PRESSURE), "no urgency line when flagged"
+    assert not has(plain, R.TIME_PRESSURE), "urgency line without the flag"
 
     chan = R.render_case(row(case_id="CASE00007",
                              channel_manipulation="True"), VENDOR).email
-    assert len(chan) > len(plain)
+    assert has(chan, R.CHANNEL_REDIRECT), "no redirect line when flagged"
+    assert not has(plain, R.CHANNEL_REDIRECT), "redirect line without the flag"
+
+    # And a control is not a flagged signal, however it reads.
+    assert not has(plain, R.TIME_PRESSURE + R.CHANNEL_REDIRECT)
 
 
 def test_hedged_gstin_reads_as_hedged():

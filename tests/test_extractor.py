@@ -636,17 +636,39 @@ def test_the_prompt_does_not_quote_the_corpus_it_is_scored_on():
     sys.path.insert(0, os.path.join(HERE, "..", "data"))
     import render as R
 
-    src = open(os.path.join(HERE, "..", "data", "render.py"),
-               encoding="utf-8").read()
-    prompt = E.SYSTEM_PROMPT.lower()
 
-    # Every long string literal in the renderer is corpus phrasing.
+    # BOTH SIDES TOKENISED THE SAME WAY, which is the whole point and was the
+    # bug. This used to build n-grams from the corpus and substring-match them
+    # against the RAW prompt, so any short word or punctuation between them
+    # broke the match: "month closing tomorrow" never matched "month-end
+    # closing is tomorrow", and the prompt sat there teaching the model one of
+    # the exact urgency sentences it would be scored on. That template scored
+    # perfectly while two registers added later failed outright.
+    def words(text):
+        return re.findall(r"[a-z]{4,}", text.lower())
+
+    N = 3
+    prompt_grams = set()
+    pw = words(E.SYSTEM_PROMPT)
+    for i in range(len(pw) - N + 1):
+        prompt_grams.add(" ".join(pw[i:i + N]))
+
+    # The TEMPLATE POOLS, not every long string in the file. Regexing the
+    # source also caught render.py's own code and comments, so schema terms the
+    # prompt is obliged to name — "proposed account number" — looked like
+    # borrowed corpus wording. Only sentences that actually reach an email
+    # count. BANNED_VOCABULARY is excluded: those are the keyword baseline's
+    # triggers, and the prompt naming a concept is not the prompt quoting mail.
+    pools = [v for k, v in vars(R).items()
+             if isinstance(v, list) and v and all(isinstance(x, str) for x in v)
+             and k not in ("BANNED_VOCABULARY", "BANNED_LABELS")]
+
     overlaps = set()
-    for phrase in re.findall(r'"([^"]{25,})"', src):
-        words = re.findall(r"[a-z]{4,}", phrase.lower())
-        for i in range(len(words) - 3):
-            gram = " ".join(words[i:i + 4])
-            if gram in prompt:
+    for phrase in [p for pool in pools for p in pool]:
+        w = words(phrase)
+        for i in range(len(w) - N + 1):
+            gram = " ".join(w[i:i + N])
+            if gram in prompt_grams:
                 overlaps.add(gram)
 
     assert not overlaps, (

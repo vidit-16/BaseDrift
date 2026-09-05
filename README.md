@@ -233,8 +233,8 @@ data/generate_inbox.py  wraps the rendered cases in AP-inbox noise. Reads the
                         extraction cache
 data/vendor_master.csv  120 vendors — the trusted record, committed
 data/vendor_accounts.csv  272 accounts with provenance, committed
-data/cases_dev.csv      622 labeled cases, committed
-data/cases_holdout.csv  278 cases — gitignored, regenerate to reproduce
+data/cases_dev.csv      624 labeled cases, committed
+data/cases_holdout.csv  276 cases — gitignored, regenerate to reproduce
 data/inbox_dev.csv      8,086 messages, 7.7% of them change requests
 ```
 
@@ -323,7 +323,7 @@ Then the steps that cost API calls:
 
 ```
 python src/pipeline.py                      # the hero case, one call
-python eval/extraction_eval.py --split dev  # 622 calls, ~$0.10
+python eval/extraction_eval.py --split dev  # 624 calls, ~$0.10
 python eval/triage_classifier_eval.py       # 405 calls, ~$0.05
 python eval/ablation.py                     # semantic vs keyword ablation
 ```
@@ -439,7 +439,7 @@ established — caught by the test asserting that no input path releases a payou
 
 Ground truth is assigned from independently authored scenario narratives, **not** derived from detector logic. Feature values are generated *from* each narrative afterwards, never the reverse.
 
-- 120 synthetic vendors, 900 cases, stratified 70/30 — 622 dev, 278 holdout
+- 120 synthetic vendors, 900 cases, stratified 70/30 — 624 dev, 276 holdout
 - Eighteen narratives: `fraud_easy`, `fraud_hard`, `fraud_compromised`,
   `fraud_mule`, `fraud_sim_swap`, `fraud_planted_account`,
   `fraud_first_contact`, `fraud_thread_hijack`,
@@ -476,18 +476,18 @@ What the rules actually buy is measured against that null baseline:
 
 | system | recall | precision | held | **false BLOCK** |
 |---|---|---|---|---|
-| null — hold everything, no rules | 100% | 85.4% | 100% | 0.0% |
-| block everything | 100% | 48.9% | 0% | 100% |
+| null — hold everything, no rules | 100% | 87.1% | 100% | 0.0% |
+| block everything | 100% | 50.8% | 0% | 100% |
 | allow everything | 0% | 0% | 0% | 0.0% |
-| **PayeeProof** | **100%** | **86.4%** | **78.5%** | **0.0%** |
+| **PayeeProof** | **100%** | **89.3%** | **79.3%** | **0.0%** |
 
-Measured on the dev split, 622 cases. The holdout agrees: 100% / 87.7% / 79.1%
+Measured on the dev split, 624 cases. The holdout agrees: 100% / 87.4% / 79.3%
 / 0.0%.
 
 With both verification channels running, no fraud case in the dev split is
 released — by PayeeProof or by the do-nothing baseline, which also catches
 sim-swap once it can run a penny drop. So recall ties, and the rules' measurable
-contribution is operational: **21.5% of payouts release with no phone call at
+contribution is operational: **20.7% of payouts release with no phone call at
 all**, and none of the traffic is rejected outright.
 
 **A rejected legitimate vendor is not the same event as a held one.** A
@@ -805,11 +805,11 @@ changes right and all 115 follow-ups wrong.)
 | action | **100%** | **100%** |
 | scope | **100%** | **100%** |
 | all three exact | **100%** | **100%** |
-| account · IFSC · GSTIN | **100% · 100% · 100%** | **100% · 100% · 100%** |
+| account · GSTIN · sender domain | 99.8% · **100%** · **100%** | **100%** · **100%** · **100%** |
+| IFSC | 99.0% | 99.6% |
 | amount | 100% | 100% |
-| sender domain | 97.3% | 96.0% |
-| urgency (precision / recall) | 88.3% / 100% | 84.4% / 100% |
-| channel manipulation | **100% / 85.8%** | **100% / 88.3%** |
+| urgency (precision / recall) | **100% / 96.1%** | **100% / 96.5%** |
+| channel manipulation (precision / recall) | **100% / 88.1%** | **100% / 82.2%** |
 | extraction failed | **0.0%** | **0.0%** |
 
 Every semantic field and every claim except sender domain is exact on all 900
@@ -819,12 +819,12 @@ documents, with no extraction failures on either split.
 
 | | recall | precision | false BLOCK | same rule as ideal |
 |---|---|---|---|---|
-| dev — rules-only reference | 100% | 86.4% | 0.0% | — |
-| **dev — with real extraction** | **100%** | **86.6%** | **0.0%** | **98.9%** |
-| holdout — rules-only reference | 100% | 87.7% | 0.0% | — |
-| **holdout — with real extraction** | **100%** | **87.7%** | **0.0%** | **99.3%** |
+| dev — rules-only reference | 100% | 89.3% | 0.0% | — |
+| **dev — with real extraction** | **100%** | **89.3%** | **0.0%** | **99.5%** |
+| holdout — rules-only reference | 100% | 87.4% | 0.0% | — |
+| **holdout — with real extraction** | **100%** | **87.4%** | **0.0%** | **98.9%** |
 
-Prompt `c66b58612fe7`, renderer 2.0.0, 900 documents extracted, 0 failures.
+Prompt `b91cb054b107`, renderer 2.0.0, 900 documents extracted, 0 failures.
 
 That is not luck, it is the architecture doing what it was built to do. Identity
 never comes from the extracted claims — the destination is read from the payout's
@@ -866,8 +866,22 @@ returns `accounts@vendor.com` where a registrable domain was asked for. It is
 corrected before the domain reaches `check_domain`, so it costs nothing, and the
 raw recovery number is reported rather than the post-normalisation one.
 
-**Channel manipulation was the weak field, and fixing it took correcting the
-measurement first.** It sat at ~80% precision and ~68% recall. The corpus
+**Both judgement fields are at 100% precision, and getting there meant fixing
+the measurement before the model.** Urgency and channel manipulation are the
+only two signals a human would call a matter of opinion; every other field is
+read straight off the page. Both now sit at 100% precision with recall in the
+80s-90s, and neither number could have been obtained by tuning, because in both
+cases the corpus could not initially express the thing being measured.
+
+Urgency scored **100% recall against four hand-written sentences** — a spelling
+test with four words. Ten registers later, including two with no clock in them
+at all ("our managing director is asking about this one personally"), real
+recall is 96%. Its precision came from replacing 62 *accidental* negatives —
+leftover wording in ordinary templates — with 105 deliberate ones, then asking
+the model whether the sender is trying to compress the buyer's decision rather
+than whether a date appears.
+
+**Channel manipulation needed the same correction first.** It sat at ~80% precision and ~68% recall. The corpus
 contained no message that used reply/thread/inbox language *without* being
 manipulation, so precision was pinned at 100% for every possible detector and
 nothing could be evaluated. Adding controls — ordinary mail using the same

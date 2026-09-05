@@ -121,7 +121,17 @@ CITY_STATE_CODE = {
     "Hyderabad": "36", "Pune": "27", "Ahmedabad": "24", "Kolkata": "19",
 }
 BANK_IFSC_PREFIX = ["HDFC", "ICIC", "SBIN", "AXIS", "KKBK", "PUNB", "UTIB"]
-LOOKALIKE_SWAPS = [("o", "0"), ("l", "1"), ("i", "1"), ("a", "@"), ("e", "3")]
+# Substitutions a typosquat actually uses. Each must leave the registrable
+# label within decision_engine.LOOKALIKE_MAX_EDITS of the real one, or the
+# corpus generates "lookalikes" the detector is not supposed to catch.
+#
+# ("a", "@") WAS IN THIS LIST and produced sender addresses like
+# payments@b@lajitraders.com — two @ signs, which is not a valid address at
+# all. It also manufactured 27 fake extraction misses: asked for the sender
+# domain, the model split on @ and returned "lajitraders.com", which is what
+# any parser does, and was scored wrong for it.
+LOOKALIKE_SWAPS = [("o", "0"), ("l", "1"), ("i", "1"), ("e", "3"),
+                   ("m", "rn"), ("a", "")]
 REBRAND_SUFFIX = ["group", "global", "india", "holdings"]
 
 
@@ -156,10 +166,29 @@ def _domain(legal_name):
 
 
 def _lookalike_domain(domain):
-    for a, b in random.sample(LOOKALIKE_SWAPS, k=1):
-        if a in domain:
-            return domain.replace(a, b, 1)
-    return domain.replace(".com", "-billing.com")  # fallback swap
+    """
+    A domain built to be misread as `domain`, and one the detector can catch.
+
+    Two bugs lived here, and both produced fraud cases whose "lookalike" was not
+    a lookalike by is_lookalike_domain's own definition — so no deception signal,
+    so R4 could not fire on 78 of 234 fraud sender domains:
+
+      1  the swap was applied to the WHOLE domain, so a domain with no matching
+         letter in its label could have its TLD altered instead — .com to .c0m.
+         The detector compares registrable labels, so that is not a typosquat to
+         it, and it is not really one to a reader either.
+
+      2  the fallback appended "-billing", eight edits from the original when
+         LOOKALIKE_MAX_EDITS is 2. Not a typosquat, just a different company.
+
+    Now: try every swap against the LABEL, and if none applies double the last
+    character, which always works and costs one edit.
+    """
+    label, _, rest = domain.partition(".")
+    for a, b in random.sample(LOOKALIKE_SWAPS, k=len(LOOKALIKE_SWAPS)):
+        if a in label:
+            return f"{label.replace(a, b, 1)}.{rest}"
+    return f"{label}{label[-1]}.{rest}"
 
 
 def _rebranded_domain(domain):

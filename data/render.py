@@ -159,11 +159,42 @@ SCOPE_FUTURE_FRAMING = [
     "facility takes what is billed from April.",
 ]
 
+# Urgency: pressure to act BEFORE the buyer has finished checking. Four of
+# these existed, covering three registers — a deadline, an audit consequence,
+# past terms — and the model scored 100% recall against them. Four sentences is
+# a spelling test with four words. The rest cover registers a real supplier
+# uses, so that a definition tightened to exclude routine chasing has somewhere
+# to visibly fail.
 TIME_PRESSURE = [
     "Month-end closing is tomorrow, so do prioritise this one.",
     "Our quarter cuts off on Friday and this is the last item open.",
     "The audit sign-off is Monday and this is holding it up.",
     "We are past terms on this one now, so anything you can do today helps.",
+    "If this could go out in today's run it would help us enormously.",
+    "Our managing director is asking about this one personally.",
+    "We may have to hold the next dispatch if it is not settled by Friday.",
+    "This is the last item before our books close for the year.",
+    "Anything you can do to get it away before the cut-off would be welcome.",
+    "I have been told to raise this every day until it moves.",
+]
+
+# CONTROLS. Mail that mentions time without applying pressure, which is what an
+# accounts-payable inbox is mostly made of.
+#
+# The corpus already produced 62 of these by accident — "Chasing INV-4471",
+# "nothing has landed yet" — as leftover wording in ordinary templates, and the
+# model read all of them as urgency. Accidental negatives are not a measurement:
+# nobody chose them, so nothing was being asserted about where the line sits.
+#
+# These draw it deliberately. The last one is the hardest: it contains the
+# month-end trigger and explicitly says nothing is unusual, so a detector
+# reading vocabulary fires and one reading pressure does not.
+URGENCY_BENIGN = [
+    "Just letting you know it has not reached us yet; no action needed today.",
+    "For your records, our terms are thirty days from the invoice date.",
+    "No rush at all — whenever the next run happens is fine.",
+    "Flagging that it exists, not asking you to expedite anything.",
+    "Our accounts close at month end as usual, nothing unusual about this one.",
 ]
 
 # Channel manipulation: the conversation is steered somewhere FEWER people can
@@ -335,6 +366,11 @@ def render_case(row: Dict[str, str], vendor: Dict[str, str]) -> RenderedCase:
 
     if row["urgency_language"] == "True":
         parts.append(rng.choice(TIME_PRESSURE))
+    elif _stable_bool(row["case_id"], "urgency_benign", 0.25):
+        # Hash-picked, like the channel controls, so adding these leaves every
+        # other choice in the email where it was.
+        parts.append(URGENCY_BENIGN[
+            _seed_for(row["case_id"]) % len(URGENCY_BENIGN)])
     if row["channel_manipulation"] == "True":
         parts.append(rng.choice(CHANNEL_REDIRECT))
     elif _stable_bool(row["case_id"], "channel_benign", 0.25):
