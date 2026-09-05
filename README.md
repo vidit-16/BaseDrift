@@ -119,60 +119,45 @@ unaffected by that toggle.
 ## Architecture
 
 ```mermaid
-flowchart TD
-    REQ["📧 Out-of-band change request<br/><i>email · invoice · message</i>"]
+flowchart LR
+    REQ["📧 <b>Change request</b><br/><i>email · invoice · message</i>"]
+    LLM["<b>Semantic layer</b><br/><i>the only LLM call</i><br/>intent · action · scope<br/><i>evidence, never a decision</i>"]
 
-    LLM["<b>Semantic layer</b> — the only LLM call<br/>intent · action · scope · pressure<br/><i>evidence, never a decision</i>"]
-
-    subgraph EV [" Authorization evidence "]
-        direction LR
-        VM["Vendor master<br/><i>trusted identity</i>"]
-        FAV["Bank validation<br/><i>bank truth</i>"]
-        LIN["Change lineage<br/><i>add vs replace</i>"]
-        XC["Cross-contact<br/><i>account reuse</i>"]
+    subgraph EV ["what the engine reads"]
+        direction TB
+        VM["Vendor master"]
+        FAV["Bank validation"]
+        LIN["Change lineage"]
+        DEST["<b>The payout's own destination</b><br/><i>never the email's</i>"]
+        VM ~~~ FAV ~~~ LIN ~~~ DEST
     end
 
-    DEST["<b>The payout's own destination</b><br/><i>resolved from RazorpayX,<br/>never from the email</i>"]
+    ENGINE{"<b>Rule engine</b><br/>R1–R7<br/><i>no LLM here</i>"}
+    ALLOW["✅ <b>Release</b>"]
+    HOLD["⏸️ <b>Hold</b><br/><i>the harshest automatic<br/>outcome there is</i>"]
+    REC["⚠️ <i>+ recommend reject</i><br/><b>a human decides</b>"]
+    VERIFY["<b>Verification</b><br/>callback · ₹1 from a<br/>named account"]
+    HUMAN["👥 <b>Two people</b><br/><i>whoever verifies<br/>cannot release</i>"]
 
-    ENGINE{"<b>Deterministic rule engine</b><br/>R1 – R7, first match wins<br/><i>no LLM here</i>"}
-
-    ALLOW["✅ <b>ALLOW</b><br/>destination matches the master"]
-    HOLD["⏸️ <b>STEP_UP_VERIFY</b><br/>the harshest automatic outcome"]
-
-    REC["⚠️ + recommended_action = reject<br/><i>a human must confirm</i>"]
-
-    VERIFY["<b>Verification</b><br/>1 · callback to the number on file<br/>2 · ₹1 from a named account<br/><i>penny drop is authoritative</i>"]
-
-    HUMAN["👥 <b>Two people, not one</b><br/><i>whoever verifies cannot release</i>"]
-
-    AUDIT[("Audit trail")]
-
-    REQ --> LLM
-    LLM --> EV
-    DEST --> ENGINE
-    EV --> ENGINE
+    REQ --> LLM --> EV --> ENGINE
     ENGINE -->|"R2a · R7"| ALLOW
     ENGINE -->|"R1 · R2b · R5 · R6"| HOLD
     ENGINE -->|"R2c · R3 · R4"| REC
-    REC --> HOLD
-    HOLD --> VERIFY
-    VERIFY --> HUMAN
-    ALLOW --> AUDIT
-    HUMAN --> AUDIT
+    REC --> HOLD --> VERIFY --> HUMAN
 
-    classDef model fill:#4fbdb4,stroke:#2c7a73,stroke-width:2px,color:#06231f
-    classDef engine fill:#f2b134,stroke:#a8760d,stroke-width:3px,color:#2b1d00
-    classDef good fill:#4caf7d,stroke:#1f6b45,stroke-width:2px,color:#04220f
-    classDef hold fill:#e08a3c,stroke:#9c4f10,stroke-width:2px,color:#2b1300
-    classDef danger fill:#d9534f,stroke:#8b2b28,stroke-width:2px,color:#2b0605
-    classDef plain fill:#5a6b7a,stroke:#31404d,stroke-width:1px,color:#f2f6f9
+    classDef model fill:#2f8f86,stroke:#7fded4,stroke-width:2px,color:#ffffff
+    classDef engine fill:#a8760d,stroke:#f2c66b,stroke-width:3px,color:#ffffff
+    classDef good fill:#2f7d55,stroke:#7fdca6,stroke-width:2px,color:#ffffff
+    classDef hold fill:#a35a12,stroke:#f0a860,stroke-width:2px,color:#ffffff
+    classDef danger fill:#a13330,stroke:#f08a86,stroke-width:2px,color:#ffffff
+    classDef plain fill:#3b4754,stroke:#8b9bab,stroke-width:1px,color:#ffffff
 
     class LLM model
     class ENGINE engine
     class ALLOW good
     class HOLD,VERIFY hold
     class REC danger
-    class REQ,DEST,VM,FAV,LIN,XC,HUMAN,AUDIT plain
+    class REQ,VM,FAV,LIN,DEST,HUMAN plain
 ```
 
 **Read it in one line:** the model turns an email into evidence, and a rule
