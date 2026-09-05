@@ -1,5 +1,5 @@
 """
-PayeeProof — freeze the operator dashboard into a folder of static HTML.
+BaseDrift — freeze the operator dashboard into a folder of static HTML.
 
     python src/demo.py --serve          # in one terminal
     python tools/snapshot.py            # in another
@@ -43,7 +43,7 @@ import sys
 import urllib.parse
 import urllib.request
 
-BASE = os.environ.get("PAYEEPROOF_SNAPSHOT_BASE", "http://127.0.0.1:8000")
+BASE = os.environ.get("BASEDRIFT_SNAPSHOT_BASE", "http://127.0.0.1:8000")
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs")
 
 BANNER = (
@@ -141,6 +141,7 @@ def main():
             print(f"  skipped {href}: {e}")
 
     written = 0
+    kept = set()
     for href, page in routes.items():
         name = local_name(href)
         if not name:
@@ -149,7 +150,27 @@ def main():
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(rewrite(page, depth=name.count("/")))
+        kept.add(path)
         written += 1
+
+    # Remove pages the corpus no longer contains. Writing without pruning is
+    # how a snapshot stops being a snapshot: regenerating after the corpus was
+    # rescaled left 74 pages from an earlier run sitting in docs/, still
+    # committed and still served, describing cases that no longer exist. They
+    # are only findable by their content, because nothing links to them.
+    #
+    # This deletes only .html under docs/, only files this run did not write,
+    # and never .nojekyll — and it runs after every page has been written, so
+    # a fetch that failed above costs one stale page rather than the folder.
+    removed = 0
+    for root, _, names in os.walk(OUT):
+        for n in names:
+            if not n.endswith(".html"):
+                continue
+            path = os.path.normpath(os.path.join(root, n))
+            if path not in kept:
+                os.remove(path)
+                removed += 1
 
     # GitHub Pages runs Jekyll by default, which skips files beginning with an
     # underscore. Nothing here starts with one today, and relying on that is a
@@ -159,6 +180,8 @@ def main():
 
     root = os.path.normpath(OUT)
     print(f"\n{written} pages written to {root}")
+    if removed:
+        print(f"{removed} stale pages removed")
     print("\nHost it any of these ways:")
     print("  GitHub Pages   Settings -> Pages -> main /docs, then open /inbox.html")
     print("  Netlify        drag the docs/ folder onto app.netlify.com/drop")
