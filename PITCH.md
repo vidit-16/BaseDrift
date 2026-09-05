@@ -6,8 +6,6 @@
 
 ---
 
----
-
 ## In one sentence
 
 When a supplier emails asking you to pay a different bank account, **every

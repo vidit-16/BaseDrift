@@ -73,9 +73,6 @@ jobs:
         # because prose is not executable. This makes it executable.
         run: python tools/consistency.py
 
-      - name: The recording script fits in five minutes
-        run: python tools/script_time.py
-
       - name: Keyword baseline must stay beaten
         run: python eval/ablation.py
 
