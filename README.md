@@ -1,5 +1,11 @@
 # BaseDrift
 
+[![tests](https://github.com/vidit-16/BaseDrift/actions/workflows/tests.yml/badge.svg)](https://github.com/vidit-16/BaseDrift/actions/workflows/tests.yml)
+[![live dashboard](https://img.shields.io/badge/dashboard-browse%20the%20snapshot-4fbdb4)](https://vidit-16.github.io/BaseDrift/inbox.html)
+[![tests](https://img.shields.io/badge/tests-303-4caf7d)](tests/)
+[![mutations killed](https://img.shields.io/badge/mutations%20killed-15%2F15-4caf7d)](tools/mutate.py)
+[![false rejections](https://img.shields.io/badge/false%20rejections-0.0%25-4caf7d)](EVALUATION.md)
+
 **A verified bank account and a verified account holder are not proof that a
 beneficiary change was authorized.**
 
@@ -34,11 +40,20 @@ and it holds anything whose authorization it cannot establish.
 
 ## At a glance
 
-**Held out, 276 cases, scored once:** 100% of fraud held, **0.0% of legitimate
-payments rejected**, precision 87.4%, false holds 14.6% — reported beside a null
-baseline of 100% / 86.3% / 0.0% / 16.1%, because *a pipeline that holds
-everything and phones every vendor scores 100% on this data* and accuracy alone
-cannot tell the two apart.
+**Held out on 276 cases, scored once, never tuned against:**
+
+| | BaseDrift | hold everything, run no rules |
+|:--|:--:|:--:|
+| fraud not released | **100%** | 100% |
+| precision | **87.4%** | 86.3% |
+| **legitimate payments rejected** | **0.0%** | 0.0% |
+| legitimate payments held for review | **14.6%** | 16.1% |
+| released with no phone call | **20.7%** | **0%** |
+
+**Read the second column first.** A pipeline that holds every payout and phones
+every vendor scores 100% on this data too, and beats us on nothing but effort.
+On accuracy we are one point from doing nothing clever at all — which is why the
+last row is the one that matters, and why this table is here rather than buried.
 
 **The corpus can fail, and it has.** Adding the planted-account exploitation
 scenario dropped recall to **93.8%** before a rule closed it. Recall of 100% on
@@ -103,36 +118,70 @@ unaffected by that toggle.
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    REQ["📧 Out-of-band change request<br/><i>email · invoice · message</i>"]
+
+    LLM["<b>Semantic layer</b> — the only LLM call<br/>intent · action · scope · pressure<br/><i>evidence, never a decision</i>"]
+
+    subgraph EV [" Authorization evidence "]
+        direction LR
+        VM["Vendor master<br/><i>trusted identity</i>"]
+        FAV["Bank validation<br/><i>bank truth</i>"]
+        LIN["Change lineage<br/><i>add vs replace</i>"]
+        XC["Cross-contact<br/><i>account reuse</i>"]
+    end
+
+    DEST["<b>The payout's own destination</b><br/><i>resolved from RazorpayX,<br/>never from the email</i>"]
+
+    ENGINE{"<b>Deterministic rule engine</b><br/>R1 – R7, first match wins<br/><i>no LLM here</i>"}
+
+    ALLOW["✅ <b>ALLOW</b><br/>destination matches the master"]
+    HOLD["⏸️ <b>STEP_UP_VERIFY</b><br/>the harshest automatic outcome"]
+
+    REC["⚠️ + recommended_action = reject<br/><i>a human must confirm</i>"]
+
+    VERIFY["<b>Verification</b><br/>1 · callback to the number on file<br/>2 · ₹1 from a named account<br/><i>penny drop is authoritative</i>"]
+
+    HUMAN["👥 <b>Two people, not one</b><br/><i>whoever verifies cannot release</i>"]
+
+    AUDIT[("Audit trail")]
+
+    REQ --> LLM
+    LLM --> EV
+    DEST --> ENGINE
+    EV --> ENGINE
+    ENGINE -->|"R2a · R7"| ALLOW
+    ENGINE -->|"R1 · R2b · R5 · R6"| HOLD
+    ENGINE -->|"R2c · R3 · R4"| REC
+    REC --> HOLD
+    HOLD --> VERIFY
+    VERIFY --> HUMAN
+    ALLOW --> AUDIT
+    HUMAN --> AUDIT
+
+    classDef model fill:#4fbdb4,stroke:#2c7a73,stroke-width:2px,color:#06231f
+    classDef engine fill:#f2b134,stroke:#a8760d,stroke-width:3px,color:#2b1d00
+    classDef good fill:#4caf7d,stroke:#1f6b45,stroke-width:2px,color:#04220f
+    classDef hold fill:#e08a3c,stroke:#9c4f10,stroke-width:2px,color:#2b1300
+    classDef danger fill:#d9534f,stroke:#8b2b28,stroke-width:2px,color:#2b0605
+    classDef plain fill:#5a6b7a,stroke:#31404d,stroke-width:1px,color:#f2f6f9
+
+    class LLM model
+    class ENGINE engine
+    class ALLOW good
+    class HOLD,VERIFY hold
+    class REC danger
+    class REQ,DEST,VM,FAV,LIN,XC,HUMAN,AUDIT plain
 ```
-Out-of-band change request (email / invoice / message)
-                    │
-        ┌───────────▼───────────┐
-        │  Semantic LLM layer   │  intent · action · scope · pressure
-        │  evidence, never a    │  normalizes meaning, not keywords
-        │  decision             │
-        └───────────┬───────────┘
-                    │
-   ┌────────────────┼────────────────┬──────────────────┐
-   │                │                │                  │
-Vendor master   FAV replay    Change lineage    Cross-contact
-(trusted        (bank truth)  (add vs replace)  account reuse
- identity)
-   └────────────────┼────────────────┴──────────────────┘
-                    │
-          Authorization evidence
-                    │
-        Deterministic policy engine        ◄── no LLM here
-                    │
-            ALLOW  /  STEP_UP_VERIFY
-                    │            ╲
-                    │         (+ recommended_action="reject")
-                    │
-   POST  /v1/payouts/{id}/approve   {"remarks": …}
-   POST  /v1/payouts/{id}/reject    {"remarks": …}    ◄── human confirms
-   PATCH /v1/fund_accounts/{id}     {"active": false} ◄── human confirms
-                    │
-              Audit trail
-```
+
+**Read it in one line:** the model turns an email into evidence, and a rule
+table with no model in it decides what happens to the money.
+
+**Two arrows are the whole design.** Nothing reaches ✅ ALLOW without the
+payout's real destination matching the vendor master — so no model output can
+release a payment on its own. And nothing reaches a rejection without a person:
+⚠️ is a *recommendation* attached to a hold, never an action.
 
 **The LLM never decides.** It converts unstructured communication into
 structured semantic evidence; a deterministic rule engine makes the money

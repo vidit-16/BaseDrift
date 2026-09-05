@@ -17,13 +17,22 @@ exactly it.** This document is that table with its reasoning attached.
 
 ## The shape of the thing
 
-```
-   unstructured request  ──►  semantic layer  ──►  evidence
-                                 (the model)          │
-                                                      ▼
-   vendor master ─────────────────────────────►  rule engine  ──►  decision
-   bank verification ─────────────────────────►  (no model)
-   the payout's own destination ──────────────►
+```mermaid
+flowchart LR
+    REQ["unstructured<br/>request"] --> SEM["semantic layer<br/><i>the model</i>"]
+    SEM --> EVID["evidence"]
+    VM["vendor master"] --> ENG
+    BANK["bank validation"] --> ENG
+    DEST["the payout's own<br/>destination"] --> ENG
+    EVID --> ENG{"rule engine<br/><i>no model</i>"}
+    ENG --> DEC["decision"]
+
+    classDef model fill:#4fbdb4,stroke:#2c7a73,color:#06231f
+    classDef engine fill:#f2b134,stroke:#a8760d,stroke-width:3px,color:#2b1d00
+    classDef plain fill:#5a6b7a,stroke:#31404d,color:#f2f6f9
+    class SEM model
+    class ENG engine
+    class REQ,EVID,VM,BANK,DEST,DEC plain
 ```
 
 Two properties hold before any rule is read, and everything below depends on
@@ -198,6 +207,38 @@ Added when the caller supplies mailbox context. Every one is `WARN` or
 
 **First match wins.** Read top to bottom; the first rule whose condition holds
 is the decision, and nothing below it runs.
+
+```mermaid
+flowchart TD
+    START(["payout.pending"]) --> R1{"R1<br/>extraction failed?"}
+    R1 -->|yes| HOLD1["⏸️ hold"]
+    R1 -->|no| R2{"R2<br/>claims no change?"}
+    R2 -->|"destination known"| OK1["✅ release"]
+    R2 -->|"destination unknown"| HOLD2["⏸️ hold"]
+    R2 -->|"another vendor's account"| REJ1["⏸️ hold + recommend reject"]
+    R2 -->|"a change is requested"| R3{"R3<br/>any Tier 1 FAIL?"}
+    R3 -->|yes| REJ2["⏸️ hold + recommend reject"]
+    R3 -->|no| R4{"R4<br/>replace + new account<br/>+ deception<br/>+ independent Tier 2 warn?"}
+    R4 -->|yes| REJ3["⏸️ hold + recommend reject"]
+    R4 -->|no| R5{"R5<br/>any Tier 1<br/>WARN / INCONCLUSIVE?"}
+    R5 -->|yes| HOLD3["⏸️ hold"]
+    R5 -->|no| R6{"R6<br/>any Tier 2<br/>WARN / INCONCLUSIVE?"}
+    R6 -->|yes| HOLD4["⏸️ hold"]
+    R6 -->|no| OK2["✅ release — R7, all clear"]
+
+    classDef good fill:#4caf7d,stroke:#1f6b45,color:#04220f
+    classDef hold fill:#e08a3c,stroke:#9c4f10,color:#2b1300
+    classDef danger fill:#d9534f,stroke:#8b2b28,color:#2b0605
+    classDef test fill:#5a6b7a,stroke:#31404d,color:#f2f6f9
+    class OK1,OK2 good
+    class HOLD1,HOLD2,HOLD3,HOLD4 hold
+    class REJ1,REJ2,REJ3 danger
+    class R1,R2,R3,R4,R5,R6,START test
+```
+
+Note what the shape tells you: **every path either releases or holds.** There
+is no branch that ends in the engine rejecting something. The three red boxes
+are holds that carry a recommendation for a person to act on.
 
 | | condition | outcome | recommends reject |
 |---|---|---|---|
