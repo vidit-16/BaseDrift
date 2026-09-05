@@ -2,8 +2,8 @@
 
 **Everything: what is on screen, what you click, where you point, what you say.**
 
-Spoken content is ~645 words → **4:18** at an unhurried pace. Clicking and two
-deliberate pauses add ~35s. **Total 4:53** against a five-minute limit.
+Spoken content is ~637 words → **4:15** at an unhurried pace. Clicking and two
+deliberate pauses add ~35s. **Total 4:50** against a five-minute limit.
 
 ```bash
 python tools/script_time.py
@@ -90,7 +90,7 @@ python tools/mutate.py --list
 > spoofed email feeds the attacker's own name into the check, and it matches.
 >
 > The check isn't broken — it's answering a different question. Every control
-> here verifies the account. Nothing verifies the authorization.
+> here verifies the account. Nothing verifies authorization.
 
 **Delivery:** this is the densest, least visual stretch. Keep it moving.
 
@@ -105,15 +105,13 @@ python tools/mutate.py --list
 **SAY**
 
 > BaseDrift intercepts at the payout-dot-pending webhook — the moment RazorpayX
-> freezes a payout for approval, before money moves.
->
-> It reads the request, resolves where the payout is actually going, and checks
-> both against the merchant's own vendor master. The master is the base. Fraud
+> freezes a payout, before money moves. It checks where the payout is actually
+> going against the merchant's own vendor master. The master is the base; fraud
 > is drift away from it.
 
 ---
 
-## 1:18 — 2:10 · The decision that shapes everything
+## 1:18 — 2:14 · The decision that shapes everything
 
 **ON SCREEN** Tab 5 — diagram, then scroll to **The ablation result** table.
 
@@ -132,6 +130,9 @@ python tools/mutate.py --list
 > That's what makes prompt injection survivable: the worst a wrong label gets
 > you is a hold. Never a release.
 
+> And the model is open-weight — moving inference in-country is a config
+> change, not a rewrite. That's compliance, not preference.
+
 **PAUSE** — one full beat while the ablation table is on screen.
 
 > And the model earns its place. Fourteen adversarial cases, no trigger words
@@ -143,9 +144,9 @@ python tools/mutate.py --list
 
 ---
 
-## 2:10 — 3:12 · The demo
+## 2:14 — 3:12 · The demo
 
-### 2:10 · the mailbox
+### 2:14 · the mailbox
 
 **ON SCREEN** Tab 1 — `/inbox`
 
@@ -154,8 +155,7 @@ python tools/mutate.py --list
 **SAY**
 
 > The operator's view. Five hundred messages, a hundred and thirty needing
-> review — triage matched every sender against the supplier records, no model
-> call.
+> review — triage matched every sender against the records with no model call.
 
 ### 2:22 · the message
 
@@ -169,9 +169,9 @@ python tools/mutate.py --list
 
 **SAY**
 
-> Which invoices are covered is never stated — it's implied by the two that
-> are named. There's the deadline. And there's the request to keep it off the
-> phone. No trigger words anywhere.
+> Which invoices are covered is never stated, only implied. There's the
+> deadline. There's the request to keep it off the phone. No trigger words
+> anywhere.
 
 ### 2:42 · the decision queue
 
@@ -224,8 +224,7 @@ case, so you cannot also release it. A different person must."*
 
 > The model could release a payout by itself. One rule returned ALLOW the
 > moment the extractor said "nothing is changing" — before any identity check
-> ran. Unseen account, bank reporting it inactive, name match of three. Still
-> ALLOW.
+> ran at all.
 
 **DO** Switch to terminal 2. Run `python tools/mutate.py --list`.
 
@@ -254,8 +253,8 @@ case, so you cannot also release it. A different person must."*
 > and phones every vendor also scores a hundred percent. On accuracy I'm one
 > point from doing nothing clever.
 >
-> The real difference is volume: a couple of hundred payouts held a day,
-> against twenty thousand.
+> The real difference is volume: a couple of hundred held a day, against
+> twenty thousand.
 >
 > And a hundred percent recall is a ceiling, not a result. It means my corpus
 > can't fail, not that the system can't.
@@ -314,6 +313,17 @@ are the credibility of everything else you said.
 
 **Say "held", never "blocked".** The engine cannot reject anything on its own.
 The wrong verb undercuts the design you are demonstrating.
+
+**Don't claim the agent or the MCP layer.** Both exist -- `src/investigator.py`
+and `mcp/inbox_server.py`, read-only and merchant-scoped -- and a rubric that
+says "spend the most time on agents" makes them tempting. But this project's
+own notes call the MCP layer a well-shaped seam with nothing plugged into it:
+no client, no transport, and the agent calls its tools in a fixed order rather
+than choosing them. Six seconds of mentioning it buys a question you cannot
+answer well, in a video whose whole argument is that this system does not
+overstate itself. The honest AI-native story is the semantic layer and its
+containment, and that already has the largest share of the running time. If
+asked, say exactly the above.
 
 **Quote the holdout, never the dev split.** 87.4% is the honest number. 89.3%
 is dev, which the rules were built on, and quoting it is the one thing a
