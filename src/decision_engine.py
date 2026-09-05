@@ -524,7 +524,7 @@ def _unanchored(v: VendorRecord, dest: str, prov: str, src: str
     the destination being paid TO — so an attacker who got an account onto the
     master with one accepted email request could later ask for the money and
     every identity check would pass, honestly, on a fact that was itself the
-    fraud. Measured: 19 of 35 such cases released. See NOTES.md V2.G.
+    fraud. Measured: 19 of 35 such cases released. See BUILD-LOG.md V2.G.
 
     The predicate is not "was this planted" — nothing can know that. It is
     "has this account ever been confirmed by anything outside an email, or ever

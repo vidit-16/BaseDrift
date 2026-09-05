@@ -1,13 +1,13 @@
 # BaseDrift — Architecture
 
-*Razorpay AI Buildathon 2026 · Track 02, AI Risk Manager*
-
 A pre-authorization decision layer for RazorpayX payouts. It intercepts at the
 `payout.pending` webhook — while the payout is frozen and no money has moved —
 and decides whether the *authorization provenance* of the destination account
 can be established.
 
 This document is standalone. It assumes no prior reading of the README.
+
+**[← README](README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
 
 ---
 
@@ -307,3 +307,99 @@ cannot affect a decision.
 - **Recall of 100% is a ceiling, not a result** — until the corpus was made able
   to fail, which it now is: adding the planted-account exploitation scenario
   dropped recall to 93.8% before a rule closed it.
+
+---
+
+## 13. The webhook, and the problem it has to solve
+
+RazorpayX fires `payout.pending` while the payout is frozen. That event says
+money is about to move — it does **not** say what document requested the
+destination, and authorization provenance is the entire question here. Two
+inputs are needed and only one arrives on the webhook.
+
+The merchant's AP system supplies the other via `POST /documents`. Correlation
+prefers an explicit `notes.basedrift_document_id` on the payout, falls back to
+the most recent document for that vendor inside a 30-day window, and otherwise
+finds nothing.
+
+**Finding nothing is not an error.** It is a true statement — nobody asked for
+the destination to change — so it is expressed as `intent=PAYMENT_FOLLOWUP`,
+tagged `evidence_source="no_document_supplied"` so no audit reader can mistake
+it for something a model read, and handed to the same decision engine as
+everything else. Rule R2 already encodes the right policy:
+
+| destination | outcome | why |
+|---|---|---|
+| a known account for this vendor | ALLOW | nothing changed; nothing to authorize |
+| an account never seen before | HELD | money moving somewhere new with nothing authorizing it |
+| an account on file for another vendor | HELD + recommend reject | cross-contact reuse |
+
+The handler decides nothing itself. It gathers evidence and calls `decide()`.
+
+**The destination comes from the payout's own fund account**, resolved through
+RazorpayX, never from an account number quoted in the request. A message naming
+the vendor's genuine account while the payout points elsewhere is caught here,
+at the integration boundary.
+
+#### Fail-safe by construction
+
+The safe state is inaction. A pending payout stays pending until something
+explicitly approves it, so every failure — bad signature, unknown fund account,
+unknown vendor, unreadable document, a crashed process, BaseDrift being down
+entirely — leaves the money where it is. There is no code path that releases a
+payout on error, which is why a 500 is an acceptable response: Razorpay retries,
+and nothing has moved in the meantime.
+
+#### Telling the merchant's systems how it ended
+
+The inbound webhook is Razorpay saying a payout is pending. The outbound one is
+BaseDrift saying a held payout was released or refused, and by whom — otherwise
+an ERP can only learn the outcome by someone watching the dashboard.
+
+```
+POST https://your-erp/hook
+X-BaseDrift-Signature: <hmac-sha256 of the exact body, BASEDRIFT_WEBHOOK_SECRET>
+
+{"event": "basedrift.case.released",
+ "payload": {"case": {
+    "payout_id": "pout_1", "resolution": "released",
+    "resolved_by": "Rahul Iyer", "rule_fired": "R5_tier1_inconclusive",
+    "history": [{"action": "callback_confirmed", "actor": "Priya Menon", ...},
+                {"action": "released",           "actor": "Rahul Iyer",  ...}]}}}
+```
+
+Configured with `BASEDRIFT_WEBHOOK_URL` and `BASEDRIFT_WEBHOOK_SECRET`; with
+no URL it does nothing and says nothing.
+
+**It fires only on `released` and `rejected`.** Intermediate states are not facts
+another system can act on, and every extra emission is one more place an account
+number travels.
+
+**A failed delivery cannot affect a decision.** The case is resolved because it
+is written down, not because a POST succeeded — so the notifier swallows delivery
+errors *and* the call site catches everything before the POST too. A test kills a
+release by making the notifier itself raise, and the release still happens. That
+test found a real gap: `build_event` and `json.dumps` run outside the notifier's
+own `try`, so a non-serialisable audit would have taken a release down with it.
+
+**It is signed with the scheme we demand of Razorpay.** Telling a finance system
+"this payout was released" is worth forging, and sending unsigned would be asking
+of others what we refuse ourselves. Production still wants a durable queue — this
+posts once, inline, and a dropped event is dropped; the event id is there for the
+receiver to deduplicate on.
+
+#### Signature verification
+
+HMAC-SHA256 over the raw body, per Razorpay's spec, with three details that are
+each a real vulnerability if got wrong: the signature covers the bytes **as
+received** rather than re-serialized JSON, the comparison is constant-time
+(`hmac.compare_digest`), and malformed input returns False rather than falling
+through. Events outside a 15-minute window are refused even with a valid
+signature, and repeated event ids are not reprocessed.
+
+A missing or zero `created_at` is refused rather than waved through. An earlier
+version guarded that check with a truthiness test, which is falsy at zero and so
+skipped freshness validation on exactly the events whose age could not be
+established — caught by the test asserting that no input path releases a payout.
+
+---

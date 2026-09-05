@@ -440,7 +440,7 @@ def test_a_passing_callback_cannot_release_a_recommended_rejection():
 
 def test_a_planted_account_cannot_clear_a_recommended_rejection():
     """
-    NOTES.md V2.6 in miniature. An attacker who once got an account onto the
+    BUILD-LOG.md V2.6 in miniature. An attacker who once got an account onto the
     vendor master penny-drops from it, and channel 2 — the authoritative one —
     passes. A previous success used as the credential for the next one.
 

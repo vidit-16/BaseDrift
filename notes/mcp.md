@@ -250,12 +250,12 @@ difference between a judge seeing the system work and reading about it.
 
 - Do not let the model choose the calls. That is a different change with its own
   evaluation problem, and `investigator.py`'s reasoner hook is already wired and
-  unevaluated. See NOTES.md V2.3.
+  unevaluated. See BUILD-LOG.md V2.3.
 - Do not add a write tool "for later". The read-only property is asserted by a
   test precisely so this cannot happen quietly.
 
 ---
 
-*Companion reading: `NOTES.md` V2.2 and V2.3 for the triage and inbox scope,
+*Companion reading: `BUILD-LOG.md` V2.2 and V2.3 for the triage and inbox scope,
 `mcp/inbox_server.py`'s module docstring for the constraints and why they exist,
 and README "What is real and what is simulated".*

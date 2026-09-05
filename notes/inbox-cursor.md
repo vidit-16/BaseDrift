@@ -203,6 +203,6 @@ behaviour of `ingest_message()` does not change; only where it remembers.
 
 ---
 
-*Companion reading: `MCP_TODO.md` for why the inbox is behind a tool boundary at
+*Companion reading: `notes/mcp.md` for why the inbox is behind a tool boundary at
 all, `COMPLIANCE.md` items 2 and 3 for the durability and access-control gaps
 this partly closes, and `mcp/inbox_server.py` for the existing read-only tools.*

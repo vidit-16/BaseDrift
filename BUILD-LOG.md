@@ -1,7 +1,19 @@
-# BaseDrift
+# BaseDrift — Build log
 
-Razorpay AI Buildathon — Track 2 (AI Risk Manager).
-Read README.md first for the full problem statement and evidence.
+**The working record.** Every item attempted, what it measured, and — more
+often than is comfortable — what it turned out not to show.
+
+This is not a changelog. It is the file where a measurement that contradicted an
+assumption got written down instead of being quietly absorbed, which is why it
+is the longest document here and the one worth reading if you want to know
+whether the numbers elsewhere can be trusted.
+
+Entries are append-only and keep their original wording; where a later finding
+overturned an earlier one, both are present and the later one says so.
+
+**[← README](README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
+
+---
 
 ## What this is
 A pre-authorization decision layer for RazorpayX payouts. It verifies

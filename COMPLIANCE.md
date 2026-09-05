@@ -6,6 +6,8 @@ design already satisfies, and what it does not.
 Written now rather than later because the answer shapes the architecture. It is
 not a legal opinion — several items below need one.
 
+**[← README](README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
+
 ---
 
 ## Why the usual answer does not apply here
@@ -203,7 +205,7 @@ to anything, and the segregation logic is written so that swapping the identity
 source is the only change required: `_actor(request)` is the single place the
 caller's identity is decided.
 
-Related and not yet built: `INBOX_CURSOR.md` records why message dedupe must key
+Related and not yet built: `notes/inbox-cursor.md` records why message dedupe must key
 on the provider-assigned id rather than the `Message-ID:` header. The header is
 attacker-written, so keying on it would let a sender collide with a processed id
 and have their own change request silently dropped.

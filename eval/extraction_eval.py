@@ -345,7 +345,7 @@ def compute_outcomes(cases, extractions, rows_by_id, vendors, index):
         reached = row["callback_reaches_known_contact"] == "True"
         # The accounts the requester can actually send from. Which one gets
         # DEMANDED is the verifier's decision, not the dataset's — see
-        # NOTES.md V2.S on why the old single bool made that unmeasurable.
+        # BUILD-LOG.md V2.S on why the old single bool made that unmeasurable.
         controls = [a for a in
                     (row.get("requester_controls_accounts") or "").split(";") if a]
         for tag, d, ctr in (("real", d_real, real), ("ideal", d_ideal, ideal)):

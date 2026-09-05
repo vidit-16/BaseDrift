@@ -36,7 +36,7 @@ is_change_request describes the NARRATIVE — did this message ask for money to 
 somewhere different — and true_vendor_id says who really sent it. Neither is a
 copy of what any stage of triage computes. The v1 mistake this avoids is
 encoding the policy's own answer in the data (see controls_existing_account in
-NOTES.md V2.S); a dataset that already knows the verdict cannot measure it.
+BUILD-LOG.md V2.S); a dataset that already knows the verdict cannot measure it.
 """
 
 import csv
@@ -194,7 +194,7 @@ def _noise_message(rng, vendors, vendor_ids, seq, primary=None):
         # not cosmetic: a legitimate supplier's mailbox history named twenty-odd
         # DISTINCT accounts, only 4.9% of which were on file. Destination churn
         # became unmeasurable, because every sender looked like they changed
-        # account on every message. See NOTES.md V2.E.
+        # account on every message. See BUILD-LOG.md V2.E.
         #
         # The rng draws still happen so the stream is unchanged and only the
         # account numbers move — shifting the stream would resample every

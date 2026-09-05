@@ -19,7 +19,7 @@ ablation against this prompt is open work.
 
 Output is NOT reproducible run to run despite temperature=0. hedged_fields in
 particular returns varying spellings for the same concept, which decision_engine
-check_gstin currently exact-matches against — see P0.4 in NOTES.md.
+check_gstin currently exact-matches against — see P0.4 in BUILD-LOG.md.
 
 Neither output is trusted as identity. The decision engine validates
 identity-bearing fields against the vendor master on every path, and an ALLOW

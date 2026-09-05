@@ -951,7 +951,7 @@ def scenario_fraud_thread_hijack(vendor, case_id, ctx):
 # on 552 dev cases before these were added: R6_contextual_risk fired 0 times and
 # R7_all_clear 0 times. Four tier-2 checks and every inbox signal were computed,
 # stored, rendered — and could not affect an outcome, because no case in the
-# corpus could reach the rule that consults them. See NOTES.md V2.E.
+# corpus could reach the rule that consults them. See BUILD-LOG.md V2.E.
 #
 # The state that reaches R6 is narrow and entirely realistic: identity fully
 # clean AND the requested destination already on the vendor's file. Two stories
