@@ -1,227 +1,320 @@
-# BaseDrift — 5-minute video script
+# BaseDrift — recording guide
 
-**Spoken content: ~630 words → 4:12 at a natural pace.** The remaining ~35
-seconds are clicking and silence during the demo, which lands the whole thing
-at **4:47**.
+**Everything: what is on screen, what you click, where you point, what you say.**
 
-That headroom is deliberate. Every recording runs long, and a script that fills
-all five minutes on paper overruns in the room.
+Spoken content is ~640 words → **4:16** at an unhurried pace. Clicking and two
+deliberate pauses add ~35s. **Total 4:51** against a five-minute limit.
 
-> **The word count is the constraint.** If you add a sentence, cut a sentence.
-> `python tools/script_time.py` re-counts it if you want to check.
+```bash
+python tools/script_time.py
+```
+
+Re-counts it. If you add a sentence, cut a sentence.
 
 ---
 
-## Before you hit record
+# Before you hit record
 
-**Terminal 1** — dashboard running and already warm:
+### 1 · Start the dashboard and let it warm up
 
 ```bash
 python src/demo.py --serve
 ```
 
-Wait for `Inbox loaded` before recording. First load does real work.
+Wait for `Inbox loaded: 501 messages triaged.` **Do not restart it after this.**
+A cold first load does real work and you do not want that on tape.
 
-**Browser tabs, pre-loaded, in this order:**
+### 2 · Open exactly these tabs, in this order
 
-1. `http://localhost:8000/inbox`
-2. `http://localhost:8000/case/pout_bec`
-3. `PITCH.md` on GitHub — for the ablation table
+| # | URL | what it is |
+|---|---|---|
+| 1 | `http://localhost:8000/inbox` | the mailbox |
+| 2 | `http://localhost:8000/message/%3C162996995f988705%40vendor.mail%3E` | INV-4819, the message you read on camera |
+| 3 | `http://localhost:8000/` | the decision queue |
+| 4 | `http://localhost:8000/case/pout_0073` | the case, where the controls live |
+| 5 | `https://github.com/vidit-16/BaseDrift` | the README, scrolled to **The ablation result** |
 
-**Terminal 2**, sitting unrun on:
+Tabs 2 and 4 are reachable by clicking from tabs 1 and 3 — open them anyway as
+a fallback, so a mis-click never costs you a take.
+
+### 3 · Second terminal, sitting on this command **unrun**
 
 ```bash
 python tools/mutate.py --list
 ```
 
-**Zoom to 125%+.** Dashboard text is small and compression eats it.
+### 4 · Final checks
 
-**Read numbers off the screen, not off this page.** The inbox header says
-`501 messages · 130 need review · 3 waiting on you`. That is a 500-message
-slice (`INBOX_MESSAGES` in `src/demo.py`) of a 25,584-message corpus. If you
-change the constant, change the line.
+- Browser zoom **125% or more**. Dashboard text is small and compression eats it.
+- Close every other tab. A visible unrelated tab is the thing people notice.
+- The numbers you say are read **off the screen**. If the demo is reseeded and
+  they change, change the words.
+
+---
+
+# The take
 
 ---
 
 ## 0:00 — 0:30 · The problem
 
-> **SCREEN:** you, or a title card.
+**ON SCREEN** You, or a plain title card. No dashboard yet.
 
-Somebody gets into your supplier's mailbox and sends an ordinary message: *our
-bank details have changed, please update them before the next run.*
+**SAY**
 
-Your finance clerk does what a careful person does. Checks the account is real.
-Checks the name matches. Both pass.
+> Somebody gets into your supplier's mailbox and sends an ordinary message: our
+> bank details have changed, please update them before the next run.
+>
+> Your finance clerk does what a careful person does. Checks the account is
+> real. Checks the name matches. Both pass.
+>
+> Both were always going to pass — the attacker owns the account they're asking
+> you to pay.
 
-Both were always going to pass — the attacker owns the account they're asking
-you to pay.
+**Delivery:** land *"both were always going to pass"* slowly. It is the hook.
 
 ---
 
 ## 0:30 — 0:56 · Why the existing controls don't close it
 
-> **SCREEN:** the control comparison table.
+**ON SCREEN** Tab 5 — GitHub README, the control comparison table.
 
-Razorpay's Fund Account Validation compares the name the bank returns against —
-their words — *"the name provided by the customer."*
+**POINT AT** the **Fund Account Validation** row, then the **BaseDrift** row.
 
-That name comes from whoever creates the fund account. A team acting on a
-spoofed email feeds the attacker's own name into the check, and it comes back a
-match.
+**SAY**
 
-The check isn't broken — it's answering a different question. Every control
-here verifies the **account**. Nothing verifies the **authorization**.
+> Razorpay's Fund Account Validation compares the name the bank returns against
+> — their words — "the name provided by the customer."
+>
+> That name comes from whoever creates the fund account. A team acting on a
+> spoofed email feeds the attacker's own name into the check, and it matches.
+>
+> The check isn't broken — it's answering a different question. Every control
+> here verifies the account. Nothing verifies the authorization.
+
+**Delivery:** this is the densest, least visual stretch. Keep it moving.
 
 ---
 
 ## 0:56 — 1:18 · What I built
 
-> **SCREEN:** the architecture diagram.
+**ON SCREEN** Tab 5 — scroll up to the **architecture diagram**.
 
-BaseDrift intercepts at the `payout.pending` webhook — the moment RazorpayX
-freezes a payout for approval, before money moves.
+**POINT AT** the teal *Semantic layer* box, then the gold *Rule engine* diamond.
 
-It reads the request, resolves where the payout is *actually* going, and checks
-both against the merchant's own vendor master. The master is the **base**.
-Fraud is **drift** away from it.
+**SAY**
+
+> BaseDrift intercepts at the payout-dot-pending webhook — the moment RazorpayX
+> freezes a payout for approval, before money moves.
+>
+> It reads the request, resolves where the payout is actually going, and checks
+> both against the merchant's own vendor master. The master is the base. Fraud
+> is drift away from it.
 
 ---
 
 ## 1:18 — 2:12 · The decision that shapes everything
 
-> **SCREEN:** diagram, then the ablation table.
+**ON SCREEN** Tab 5 — diagram, then scroll to **The ablation result** table.
 
-One choice drives the rest: **the model produces evidence, a deterministic rule
-engine makes the money decision.**
+**POINT AT** the arrow from *Rule engine* to *Release*, then the *0/14* and
+*14/14* cells.
 
-The LLM reads unstructured email and returns structured semantics. Called once,
-returns JSON, holds no tools. There is no path from a model output to an
-approve endpoint.
+**SAY**
 
-That's what makes prompt injection survivable: the worst a wrong label gets you
-is a hold. Never a release.
+> One choice drives the rest: the model produces evidence, a deterministic rule
+> engine makes the money decision.
+>
+> The LLM reads unstructured email and returns structured semantics. Called
+> once, returns JSON, holds no tools — no path from a model output to an
+> approve endpoint.
+>
+> That's what makes prompt injection survivable: the worst a wrong label gets
+> you is a hold. Never a release.
 
-> **SCREEN:** the 0/14 vs 14/14 table. *Pause here.*
+**PAUSE** — one full beat while the ablation table is on screen.
 
-And the model earns its place — I measured it against a regex baseline.
-Fourteen cases where no message contains the trigger words.
-
-Baseline, **zero out of fourteen**. Semantic layer, **fourteen out of
-fourteen**. On the controls — full of account numbers, requesting no change —
-the baseline flags all four. The model flags none.
+> And the model earns its place. Fourteen adversarial cases, no trigger words
+> in any of them.
+>
+> Baseline, zero out of fourteen. Semantic layer, fourteen out of fourteen. On
+> the controls — full of account numbers, requesting no change — the baseline
+> flags all four. The model flags none.
 
 ---
 
 ## 2:12 — 3:12 · The demo
 
-> **SCREEN:** live dashboard. Slow down.
+### 2:12 · the mailbox
 
-The operator's view. Five hundred messages, a hundred and thirty needing
-review — triage matched every sender against the supplier records with no model
-call at all.
+**ON SCREEN** Tab 1 — `/inbox`
 
-> **CLICK:** a flagged message → its case.
+**POINT AT** the header line: `501 messages · 130 need review · 3 waiting on you`
 
-A held payout, with every signal and where it came from.
+**SAY**
 
-> **POINT AT:** the verification panel.
+> The operator's view. Five hundred messages, a hundred and thirty needing
+> review — triage matched every sender against the supplier records, no model
+> call.
 
-And a hold isn't a dead end. It names what would release it — not "verify the
-vendor", but **this specific account**, with forty-three settled payouts. "An
-account on file" would let an attacker use one they planted.
+### 2:24 · the message
 
-> **DO THIS IN ORDER — skipping step 1 gives you the wrong refusal.**
-> 1. *Acting as* **Priya Menon** → **Supplier confirmed the change**
-> 2. Still **Priya Menon** → **Release the payment**
+**DO** Click the row **INV-4819 — accounts@novasystems.com**.
 
-So I recorded the verification myself. Watch what happens when I release it.
+**POINT AT** these three sentences in the body, in order:
 
-> **SCREEN:** the refusal — *"You recorded the verification on this case, so
-> you cannot also release it. A different person must."* **Pause.**
+1. *"INV-4819 from October is still open on our ledger, and the retainer runs through March"*
+2. *"Our quarter cuts off on Friday"*
+3. *"Replying here rather than by phone"*
 
-Refused server-side. Whoever verifies cannot release. Not a greyed-out button —
-a refusal on the POST.
+**SAY**
+
+> Which invoices are covered is never stated — it's implied by the two that
+> are named. There's the deadline. And there's the request to keep it off the
+> phone. No trigger words anywhere.
+
+### 2:44 · the decision queue
+
+**DO** Click **Open the decision →**, then **← All decisions**.
+
+**POINT AT** the header: `133 decisions · 5 not released · 1 recommended for rejection`,
+then the **pout_mule** row tagged `RECOMMEND REJECT`.
+
+**SAY**
+
+> Five held. Exactly one carries a rejection recommendation.
+
+### 2:56 · the control
+
+**DO** Click **pout_0073**. Scroll to **Verification — what would release this**.
+
+**POINT AT** the account number `064987339232` and the line beneath it.
+
+**SAY**
+
+> A hold isn't a dead end. It names what would release it — not "verify the
+> vendor", but this specific account, with thirty settled payouts. "An account
+> on file" would let an attacker use one they planted.
+
+**DO — in this order. Skipping step 1 gives you the wrong refusal.**
+
+1. *Acting as* → **Priya Menon**, click **Supplier confirmed the change**
+2. Leave it on **Priya Menon**, click **Release the payment**
+
+**SAY**
+
+> So I recorded the verification myself. Watch what happens when I release it.
+
+**ON SCREEN** the refusal, verbatim: *"You recorded the verification on this
+case, so you cannot also release it. A different person must."*
+
+**PAUSE** — one full beat.
+
+**SAY**
+
+> Refused server-side. Whoever verifies cannot release. Not a greyed-out button
+> — a refusal on the POST.
 
 ---
 
 ## 3:12 — 4:02 · What broke
 
-> **SCREEN:** FINDINGS.md, then Terminal 2.
+**ON SCREEN** Tab 5 — navigate to **FINDINGS.md**.
 
-The findings are what I'd actually want reviewed.
+**SAY**
 
-**The model could release a payout by itself.** One rule returned ALLOW the
-moment the extractor said "nothing is changing" — before any identity check
-ran. Unseen account, bank reporting it inactive, name match of three. Still
-ALLOW.
+> The model could release a payout by itself. One rule returned ALLOW the
+> moment the extractor said "nothing is changing" — before any identity check
+> ran. Unseen account, bank reporting it inactive, name match of three. Still
+> ALLOW.
+>
+> A rejection rule corroborated itself — the only signal setting impersonation
+> was also the warning meant to corroborate it. The second condition was
+> satisfied by the first.
 
-**A rejection rule corroborated itself.** It wanted impersonation evidence plus
-an independent warning — but the only signal setting impersonation *is* one of
-those warnings. The second condition was satisfied by the first.
+**DO** Switch to terminal 2. Run `python tools/mutate.py --list`.
 
-> **RUN:** `python tools/mutate.py --list`
+**POINT AT** the scrolling list of invariants.
 
-So I stopped trusting the suite and mutation-tested it. Fifteen deliberate
-breaks of invariants this project claims out loud. All fifteen killed — an
-earlier pass found two that weren't, which is the point.
+**SAY**
+
+> So I stopped trusting the suite and mutation-tested it. Fifteen deliberate
+> breaks of invariants this project claims out loud. All fifteen killed — an
+> earlier pass found two that weren't, which is the point.
 
 ---
 
 ## 4:02 — 4:35 · What the numbers say, and don't
 
-> **SCREEN:** the results table.
+**ON SCREEN** Tab 5 — README, **At a glance** results table.
 
-Scored once on a held-out split: **100% of fraud held, zero legitimate payments
-rejected.**
+**POINT AT** the **second column** — `hold everything, run no rules`.
 
-But the honest reading is the next line. A pipeline that holds *everything* and
-phones every vendor also scores 100%. On accuracy I'm three points from doing
-nothing clever.
+**SAY**
 
-The real difference is volume: a couple of hundred payouts held a day, against
-twenty thousand.
+> Scored once on a held-out split: a hundred percent of fraud held, zero
+> legitimate payments rejected.
+>
+> But the honest reading is the next column. A pipeline that holds everything
+> and phones every vendor also scores a hundred percent. On accuracy I'm one
+> point from doing nothing clever.
+>
+> The real difference is volume: a couple of hundred payouts held a day,
+> against twenty thousand.
+>
+> And a hundred percent recall is a ceiling, not a result. It means my corpus
+> can't fail, not that the system can't.
 
-And 100% recall is a **ceiling, not a result**. It means my corpus can't fail,
-not that the system can't.
+**Delivery:** do not rush this. Volunteering the baseline is the most
+credible thing in the video.
 
 ---
 
 ## 4:35 — 4:50 · Close
 
-> **SCREEN:** back to you.
+**ON SCREEN** Back to you, or the title card.
 
-The argument isn't that a human can't keep up — it's that they don't know
-**which call to make**.
+**SAY**
 
-*"Our quarter closes Friday"* is written to make a person skip the check. A
-rule engine doesn't feel deadlines.
+> The argument isn't that a human can't keep up — it's that they don't know
+> which call to make.
+>
+> "Our quarter closes Friday" is written to make a person skip the check. A
+> rule engine doesn't feel deadlines.
 
 ---
 
-# Notes for the take
+# If it goes wrong
 
-**Slow down twice:** the ablation numbers (1:55) and the two-person refusal
-(3:02). Those are the moments a technical reviewer leans in. Full beat of
-silence after each.
+**The refusal doesn't appear.** You skipped step 1, or *Acting as* flipped to
+someone else. The message you want names Priya Menon. If you see *"Nothing is
+verified yet"*, that is the wrong refusal — record the callback first.
 
-**Speed up once:** 0:30–0:56 on the existing controls. Densest, least visual
-thing you say.
+**A page 404s.** Tabs 2 and 4 are already open as fallbacks. Switch, don't
+reload.
 
-**If you overrun**, cut in this order:
+**You overrun.** Cut in this order:
 
-1. "with every signal and where it came from" (2:30)
-2. The `sender_domain` detail in the corroboration finding (3:35)
-3. The whole "What broke" second finding — keep the first and the mutation
-   testing
+1. The decision-queue beat at 2:44 — go straight from the message to the case
+2. The `sender_domain` detail in the corroboration finding at 3:30
+3. The second "what broke" finding entirely — keep the first and the mutations
 
-Do **not** cut the mutation testing or "ceiling, not a result". The first is
-the strongest evidence of rigour; the second is the credibility of everything
+Never cut the mutation testing or *"ceiling, not a result"*. The first is the
+strongest evidence of rigour; the second is the credibility of everything
 before it.
 
-**Say "held", never "blocked".** The engine cannot reject anything on its own,
-and the wrong verb undercuts the design you're demonstrating.
+---
 
-**Don't apologise for what's simulated.** If it comes up, once: the control
+# Three rules for the whole take
+
+**Say "held", never "blocked".** The engine cannot reject anything on its own.
+The wrong verb undercuts the design you are demonstrating.
+
+**Quote the holdout, never the dev split.** 87.4% is the honest number. 89.3%
+is dev, which the rules were built on, and quoting it is the one thing a
+reviewer will catch.
+
+**Don't apologise for what's simulated.** Once, if it comes up: the control
 point needs live mode with Approval Workflow, because the `pending` state does
 not exist in test mode — the event cannot fire in a sandbox. Documented
 platform constraint, cited in the README, not a shortcut.

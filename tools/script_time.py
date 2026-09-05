@@ -16,14 +16,23 @@ Timecodes in a document are an intention. This counts the words.
 
 WHAT COUNTS AS SPOKEN
 =====================
-Only prose. Headings are labels, blockquotes are stage directions ("SCREEN:",
-"CLICK:"), code fences are commands, numbered lists inside a blockquote are
-click-by-click instructions, and everything after the "Notes for the take"
-divider is guidance to the presenter. None of it is said out loud.
+Exactly one thing: **blockquote lines inside a timed section.** The guide puts
+every spoken word in a blockquote under a `**SAY**` label, and everything else
+on the page is direction — what is on screen, what to click, where to point,
+how to deliver it.
 
-Bold and italic markers are stripped rather than skipped, because "**The real
-number is volume.** At twenty thousand..." is one spoken sentence that happens
-to start with emphasis — dropping the line would undercount it.
+That convention is the reason this file is short. An earlier version tried to
+infer speech by excluding headings, quotes, tables and lists, and when the
+guide was rewritten to put the words in blockquotes it counted 526 words
+instead of 634 and cheerfully reported a minute of headroom that did not exist.
+A word counter that silently undercounts is worse than none, because it is
+believed.
+
+Bold and italic markers are stripped rather than skipped: "**Both** were always
+going to pass" is one spoken sentence.
+
+The pre-flight section and everything from "If it goes wrong" onward are
+guidance to the presenter and are never spoken.
 """
 
 import argparse
@@ -35,26 +44,34 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "..", "SCRIPT.md")
 
-# The pre-flight checklist is setup, not narration.
+# Sections that are direction, never speech.
 NOT_SPOKEN = ("Before you hit record",)
+
+# Everything from here on is guidance to the presenter.
+END_MARKERS = ("# If it goes wrong", "# Notes for the take")
 
 
 def spoken_sections(text):
-    """[(section title, spoken words)], in document order."""
-    body = text.split("# Notes for the take")[0]
+    """[(section title, spoken words)] — blockquote content only."""
+    body = text
+    for marker in END_MARKERS:
+        if marker in body:
+            body = body.split(marker)[0]
     body = re.sub(r"```.*?```", "", body, flags=re.S)
 
     out, title, buf = [], None, []
-    for line in body.split("\n"):
+    for line in body.splitlines():
         if line.startswith("## "):
             if title is not None:
                 out.append((title, buf))
             title, buf = line[3:].strip(), []
             continue
         l = line.strip()
-        if not l or l.startswith(("#", ">", "|", "---")):
+        if not l.startswith(">"):
             continue
-        if re.match(r"^\d+\.", l) or l.startswith(("- ", "* ")):
+        l = l.lstrip(">").strip()
+        # A numbered list inside a blockquote is a click instruction.
+        if not l or re.match(r"^\d+\.", l):
             continue
         buf.append(re.sub(r"[*_`]", "", l))
     if title is not None:
