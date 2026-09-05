@@ -1521,6 +1521,25 @@ V2.G  R6 IS REACHABLE NOW, AND GETTING THERE FOUND A HOLE IN THE TRUST STORE
 
 V2.H  THE HOLDOUT, RE-SCORED AFTER THE TRUST-STORE FIX  (278 cases, 2026-09-02)
 
+      FIGURES BELOW ARE HISTORICAL — the corpus was regenerated after this entry
+      was written, and the split boundary moved. Every number in this entry was
+      true of the corpus of 2026-09-02 and none of it describes the corpus in
+      the repository today:
+
+                          this entry (278)    today (276)
+        precision              87.7%             87.4%
+        false hold             13.4%             14.6%
+        null precision         86.1%             86.3%
+        null false hold        15.5%             16.1%
+        dev split                622               624
+        dev precision          86.4%             89.3%
+
+      Re-measured 2026-09-05; EVALUATION.md carries the current figures and is
+      the one to quote. This entry is kept unedited because the log is
+      append-only and because the drift is itself the finding: nobody noticed
+      the README had been quoting these numbers for a corpus that no longer
+      existed until a restructure forced a re-measurement.
+
       WHAT THIS IS, AND WHAT IT IS NOT. A RE-SCORE, not a virgin holdout. 249 of
       these 278 cases were scored in V2.4 and that result has been read. Two
       things here are genuinely unseen:
