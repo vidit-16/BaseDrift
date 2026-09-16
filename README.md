@@ -245,6 +245,12 @@ python eval/ablation.py
 python src/demo.py --serve      # loads the inbox, then serves the dashboard
 ```
 
+<p align="center">
+  <img src="docs/screenshots/basedrift_decisions.png" alt="Decisions list with held and released payouts" width="49%">
+  <img src="docs/screenshots/basedrift_case.png" alt="A held payout: destination belongs to a different supplier" width="49%">
+</p>
+<p align="center"><em>Every decision, held payouts first (left). A payout held because its destination account is already on file for a different supplier, with the verification that would release it (right).</em></p>
+
 **There is a frozen copy in [`docs/`](docs/)** — 325 pages, browsable without
 running anything. Deliberately a snapshot rather than a deployment: this app has
 POST routes with no authentication in front of them, and a tunnel means anyone
