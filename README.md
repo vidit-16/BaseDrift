@@ -2,9 +2,9 @@
 
 [![tests](https://github.com/vidit-16/BaseDrift/actions/workflows/tests.yml/badge.svg)](https://github.com/vidit-16/BaseDrift/actions/workflows/tests.yml)
 [![live dashboard](https://img.shields.io/badge/dashboard-browse%20the%20snapshot-4fbdb4)](https://vidit-16.github.io/BaseDrift/inbox.html)
-[![tests](https://img.shields.io/badge/tests-303-4caf7d)](tests/)
+[![tests](https://img.shields.io/badge/tests-308-4caf7d)](tests/)
 [![mutations killed](https://img.shields.io/badge/mutations%20killed-15%2F15-4caf7d)](tools/mutate.py)
-[![false rejections](https://img.shields.io/badge/false%20rejections-0.0%25-4caf7d)](EVALUATION.md)
+[![false rejections](https://img.shields.io/badge/false%20rejections-0.0%25-4caf7d)](docs/EVALUATION.md)
 
 **A verified bank account and a verified account holder are not proof that a
 beneficiary change was authorized.**
@@ -28,13 +28,13 @@ and it holds anything whose authorization it cannot establish.
 
 | | |
 |---|---|
-| **[The pitch](PITCH.md)** | What this is and why, in one read |
-| **[The rulebook](RULEBOOK.md)** | Every decision the engine can reach, and what to do about it |
-| **[Architecture](ARCHITECTURE.md)** | How it is built, and the boundary that defines it |
-| **[Evaluation](EVALUATION.md)** | The numbers, the methodology, and what they cannot tell you |
-| **[What broke](FINDINGS.md)** | Four ways this could have released a payout it should not have |
-| **[Build log](BUILD-LOG.md)** | The working record — every item, what it measured, what it does not show |
-| **[Compliance](COMPLIANCE.md)** | What production would have to satisfy |
+| **[The pitch](docs/PITCH.md)** | What this is and why, in one read |
+| **[The rulebook](docs/RULEBOOK.md)** | Every decision the engine can reach, and what to do about it |
+| **[Architecture](docs/ARCHITECTURE.md)** | How it is built, and the boundary that defines it |
+| **[Evaluation](docs/EVALUATION.md)** | The numbers, the methodology, and what they cannot tell you |
+| **[What broke](docs/FINDINGS.md)** | Four ways this could have released a payout it should not have |
+| **[Build log](docs/BUILD-LOG.md)** | The working record — every item, what it measured, what it does not show |
+| **[Compliance](docs/COMPLIANCE.md)** | What production would have to satisfy |
 
 ---
 
@@ -59,7 +59,7 @@ last row is the one that matters, and why this table is here rather than buried.
 scenario dropped recall to **93.8%** before a rule closed it. Recall of 100% on
 a corpus that cannot fail is a ceiling, not a result.
 
-**303 tests, and mutation testing proves they bite.** `tools/mutate.py` breaks
+**308 tests, and mutation testing proves they bite.** `tools/mutate.py` breaks
 fifteen stated invariants in turn — the two-person rule, tier separation, the
 trust-store anchor — and checks the suite notices. **15/15 killed.** An earlier
 pass found two survivors, and *those were the finding*: a compound guard whose
@@ -187,9 +187,9 @@ mistaken extraction achieves is downgrading a rejection recommendation to a
 plain hold — never a release.
 
 This was not true until recently. R2 used to return ALLOW on the intent label
-alone, before any identity check ran. See **[what broke](FINDINGS.md)**.
+alone, before any identity check ran. See **[what broke](docs/FINDINGS.md)**.
 
-→ **[The full rule table, and what each outcome asks a person to do](RULEBOOK.md)**
+→ **[The full rule table, and what each outcome asks a person to do](docs/RULEBOOK.md)**
 
 ---
 
@@ -300,7 +300,7 @@ python data/generate_inbox.py   # the AP inbox around those cases
 Everything here runs with **no API key**:
 
 ```bash
-python tests/run_all.py       # 303 tests across 9 suites
+python tests/run_all.py       # 308 tests across 10 suites
 python tools/mutate.py        # 15 mutations of stated invariants
 python eval/rules_eval.py     # rule scoring vs baselines
 python eval/triage_eval.py    # inbox funnel, and the allowlist counterfactual
@@ -308,6 +308,13 @@ python eval/base_rates.py     # daily call volume vs the null baseline
 python src/demo.py            # THE DEMO — one payout, end to end, ~2 min
 python src/demo.py --serve    # the same, then the dashboard on port 8000
 python src/webhook_demo.py    # five signed scenarios over real HTTP
+```
+
+Or run the webhook handler in a container (store starts empty; the flag loads the demo scenarios):
+
+```bash
+docker build -t basedrift .
+docker run -p 8000:8000 -e BASEDRIFT_SEED_DEMO=1 basedrift   # http://localhost:8000
 ```
 
 And the steps that cost API calls:
@@ -322,7 +329,7 @@ python eval/ablation.py                     # semantic vs keyword ablation
 
 The pinned model, `gpt-oss-120b`, is **open-weight** — the model does not change
 when the provider does. That is what keeps the data-localisation option in
-[COMPLIANCE.md](COMPLIANCE.md) open, and why the provider is configuration
+[COMPLIANCE.md](docs/COMPLIANCE.md) open, and why the provider is configuration
 rather than code.
 
 | variable | what it does |
@@ -377,11 +384,13 @@ src/
   vocabulary.py       every internal code → the operator's language
 mcp/inbox_server.py   MCP inbox tools — read-only, scoped to one merchant
 eval/                 rules · triage · base rates · extraction · ablation
-tests/                303 tests across 9 suites, none needing an API key
+tests/                308 tests across 10 suites, none needing an API key
 tools/mutate.py       mutation testing of stated invariants
 tools/snapshot.py     freezes the dashboard into docs/ as static HTML
 data/                 seeded generator, renderer, and the committed corpus
-docs/                 the frozen dashboard, 325 pages, no server required
+docs/                 the frozen dashboard (325 pages, no server required),
+                      plus the pitch, rulebook, architecture, evaluation,
+                      findings, build log and compliance documents
 ```
 
 **The corpus**, all seeded and reproducible:
@@ -406,7 +415,7 @@ to prevent.
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency handling; document correlation; the rules evaluation and the
 ablation; the operator dashboard; the inbox triage funnel and its MCP tool
-layer; the case file and its server-side two-person rule; 303 tests.
+layer; the case file and its server-side two-person rule; 308 tests.
 
 **Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
 vendor lookups that would be API reads. FAV results are replayed

@@ -3,7 +3,7 @@
 Written to be picked up cold. Not built yet; this is the design and the reasons,
 including one security finding that changes what the key has to be.
 
-**[← back to the project](../README.md)** · **[other working notes](README.md)**
+**[← back to the project](../../README.md)** · **[other working notes](README.md)**
 
 ---
 
@@ -31,7 +31,7 @@ Both in memory. Both forgotten on restart. Two consequences:
   already handled.
 - **The webhook has the same bug.** `_seen_events` is the replay guard. A
   restart forgets which Razorpay events were processed, so a redelivery is
-  decided twice. COMPLIANCE.md item 2 already lists this; the inbox work fixes
+  decided twice. docs/COMPLIANCE.md item 2 already lists this; the inbox work fixes
   both with one table.
 
 Neither is a data-loss bug — the safe state is inaction and a duplicate decision
@@ -154,7 +154,7 @@ opaque cursor has somewhere to live without a migration.
 - **Claim-then-process** leaves a claimed row with a NULL `document_id`, which a
   sweeper can find and retry. The failure is visible and recoverable.
 
-That is the same shape COMPLIANCE.md asks for: durably claim the event, then do
+That is the same shape docs/COMPLIANCE.md asks for: durably claim the event, then do
 the work, and do not mark it complete until the work actually finishes.
 
 ---
@@ -208,5 +208,5 @@ behaviour of `ingest_message()` does not change; only where it remembers.
 ---
 
 *Companion reading: `notes/mcp.md` for why the inbox is behind a tool boundary at
-all, `COMPLIANCE.md` items 2 and 3 for the durability and access-control gaps
+all, `docs/COMPLIANCE.md` items 2 and 3 for the durability and access-control gaps
 this partly closes, and `mcp/inbox_server.py` for the existing read-only tools.*

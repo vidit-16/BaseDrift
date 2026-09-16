@@ -32,7 +32,7 @@ control is applied where the loss is.
 WHAT THIS IS NOT
 It is an in-memory record for the demo and for evaluation. Production needs it
 durable, authenticated and append-only, alongside everything else in
-COMPLIANCE.md. The rules here would not change; only their storage would.
+docs/COMPLIANCE.md. The rules here would not change; only their storage would.
 """
 
 import time
@@ -41,7 +41,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # ── Who is on the desk ───────────────────────────────────────
 #
 # Three named roles, because the two-person rule is invisible until there are
-# two people. Not authentication — the demo has none, and COMPLIANCE.md says so
+# two people. Not authentication — the demo has none, and docs/COMPLIANCE.md says so
 # — but enough that the control can be exercised rather than described.
 
 OPERATORS = [

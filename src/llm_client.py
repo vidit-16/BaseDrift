@@ -7,7 +7,7 @@ rather than a hunt across the codebase.
 
 THE PROVIDER IS CONFIGURATION, NOT CODE
 =======================================
-COMPLIANCE.md rests an argument on this file: the pinned model is OPEN-WEIGHT,
+docs/COMPLIANCE.md rests an argument on this file: the pinned model is OPEN-WEIGHT,
 and this is the only module IN THE DECISION PATH that talks to a provider, so
 bringing inference inside India for RBI payment-data localisation is a one-file
 change.

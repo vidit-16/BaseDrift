@@ -7,7 +7,7 @@ The short version: **recall of 100% is a ceiling, not a result.** It says the
 corpus cannot fail, not that the system cannot. Everything below is an attempt
 to be precise about which claims rest on the data and which do not.
 
-**[← README](README.md)** · **[Findings](FINDINGS.md)** · **[Rulebook](RULEBOOK.md)** · **[Build log](BUILD-LOG.md)**
+**[← README](../README.md)** · **[Findings](FINDINGS.md)** · **[Rulebook](RULEBOOK.md)** · **[Build log](BUILD-LOG.md)**
 
 ---
 

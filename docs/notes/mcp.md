@@ -4,7 +4,7 @@ Written to be picked up cold. Everything below came out of working through what
 `mcp/inbox_server.py` actually is, and it ends in a decision that has not been
 made.
 
-**[← back to the project](../README.md)** · **[other working notes](README.md)**
+**[← back to the project](../../README.md)** · **[other working notes](README.md)**
 
 ---
 
@@ -169,7 +169,7 @@ Ranked by how much weight each can carry.
 **1. Credentials — the real argument.**
 A direct Gmail integration means BaseDrift holds OAuth tokens for the
 merchant's mailbox: a fraud vendor with read access to customer email. That is a
-serious liability and COMPLIANCE.md already has to argue data minimisation under
+serious liability and docs/COMPLIANCE.md already has to argue data minimisation under
 DPDP.
 
 With MCP, **the merchant runs the server.** They hold the credentials, they set
@@ -254,12 +254,12 @@ difference between a judge seeing the system work and reading about it.
 
 - Do not let the model choose the calls. That is a different change with its own
   evaluation problem, and `investigator.py`'s reasoner hook is already wired and
-  unevaluated. See BUILD-LOG.md V2.3.
+  unevaluated. See docs/BUILD-LOG.md V2.3.
 - Do not add a write tool "for later". The read-only property is asserted by a
   test precisely so this cannot happen quietly.
 
 ---
 
-*Companion reading: `BUILD-LOG.md` V2.2 and V2.3 for the triage and inbox scope,
+*Companion reading: `docs/BUILD-LOG.md` V2.2 and V2.3 for the triage and inbox scope,
 `mcp/inbox_server.py`'s module docstring for the constraints and why they exist,
 and README "What is real and what is simulated".*

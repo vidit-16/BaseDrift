@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 
 from decision_engine import (
-    Decision, VendorRecord, AccountRecord, ALLOW, STEP_UP, BLOCK,
+    Decision, VendorRecord, ALLOW, STEP_UP, BLOCK,
 )
 
 CONFIRMED     = "CONFIRMED"       # channel 1: the vendor answered and confirmed
@@ -367,9 +367,9 @@ def _run_channels(decision: Decision,
             reason=(
                 f"No payment could be made from {named.account_number}, the "
                 f"account this system named ({basis}). "
-                + (f"The requester CAN send from another account on file, which "
-                   f"is not the same thing and is not accepted: an account they "
-                   f"could have had added is not evidence they are the vendor. "
+                + ("The requester CAN send from another account on file, which "
+                   "is not the same thing and is not accepted: an account they "
+                   "could have had added is not evidence they are the vendor. "
                    if planted else "")
                 + (f"The callback to {contact} was answered, which on its own is "
                    f"what a taken-over number looks like — and also what a "

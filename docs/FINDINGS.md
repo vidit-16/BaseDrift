@@ -9,7 +9,7 @@ hides its own near-misses is the failure mode it exists to prevent.** The
 second half of this document is the list of things still wrong, or right for
 reasons that are weaker than they look.
 
-**[← README](README.md)** · **[Evaluation](EVALUATION.md)** · **[Rulebook](RULEBOOK.md)** · **[Build log](BUILD-LOG.md)**
+**[← README](../README.md)** · **[Evaluation](EVALUATION.md)** · **[Rulebook](RULEBOOK.md)** · **[Build log](BUILD-LOG.md)**
 
 ---
 

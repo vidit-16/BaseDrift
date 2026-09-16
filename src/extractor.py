@@ -19,7 +19,7 @@ ablation against this prompt is open work.
 
 Output is NOT reproducible run to run despite temperature=0. hedged_fields in
 particular returns varying spellings for the same concept, which decision_engine
-check_gstin currently exact-matches against — see P0.4 in BUILD-LOG.md.
+check_gstin currently exact-matches against — see P0.4 in docs/BUILD-LOG.md.
 
 Neither output is trusted as identity. The decision engine validates
 identity-bearing fields against the vendor master on every path, and an ALLOW
@@ -288,7 +288,7 @@ class ExtractionResult:
 
     # Provenance. MODEL_PREFERENCE auto-detects, so without recording it the
     # audit cannot say which model read the document — and "an AI decided" is
-    # not an auditable statement. See COMPLIANCE.md.
+    # not an auditable statement. See docs/COMPLIANCE.md.
     model_used:  Optional[str] = None
     # WHICH HOST ran the model. gpt-oss-120b is open-weight, so the same model
     # id is served by a dozen companies and OpenRouter routes across ~18 of

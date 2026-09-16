@@ -186,7 +186,7 @@ def main():
     print()
     print(f"  Extracting every message would be {n} calls. The funnel makes it")
     print(f"  {routed} — a {1 - routed / n:.1%} reduction, and the stage doing")
-    print(f"  most of that work runs no model at all.")
+    print("  most of that work runs no model at all.")
     print()
     print("  CAVEAT. The noise here is authored, and authored noise is easier")
     print("  than real mail: no forwarded chains, no attachments-only messages,")

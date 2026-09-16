@@ -149,7 +149,7 @@ def main():
     print()
 
     ratio = n / pp_holds if pp_holds else float("inf")
-    print(f"  Both catch every fraud case in this corpus. The difference is that")
+    print("  Both catch every fraud case in this corpus. The difference is that")
     print(f"  one asks for {pp_holds:,.0f} phone calls a day and the other asks for")
     print(f"  {n:,.0f} — a factor of {ratio:.0f}.")
     print()

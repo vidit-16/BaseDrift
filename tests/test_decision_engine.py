@@ -161,8 +161,8 @@ def test_inactive_account_holds_but_is_not_an_identity_conflict():
 
 def test_unknown_account_status_never_allows():
     """FAV inconclusive must not read as clean."""
-    d = run(ext(intent=INTENT_FOLLOWUP), dest=KNOWN_ACCT,
-            fav=FAVResult("unknown", "Balaji Logistics", 99))
+    run(ext(intent=INTENT_FOLLOWUP), dest=KNOWN_ACCT,
+        fav=FAVResult("unknown", "Balaji Logistics", 99))
     # A follow-up to a known account is fine on continuity, so this asserts the
     # signal exists and is non-PASS rather than forcing a particular outcome.
     from decision_engine import check_account_status, PASS

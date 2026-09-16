@@ -57,8 +57,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "src"))
 import pipeline  # noqa: E402
 import verifier  # noqa: E402
 from decision_engine import (  # noqa: E402
-    decide, Decision, FAVResult, VendorRecord,
-    ALLOW, STEP_UP, BLOCK, WARN,
+    decide, Decision, FAVResult, ALLOW, STEP_UP, BLOCK, WARN,
 )
 from extractor import (  # noqa: E402
     ExtractionResult,
@@ -369,7 +368,7 @@ def report(results, split, n):
           f"fall back to the callback.")
     print(f"             {pp.c2_named_but_uncontrolled} case(s) controlled SOME "
           f"account on file but not the")
-    print(f"             one this system named — the planted-account pattern.")
+    print("             one this system named — the planted-account pattern.")
     print()
 
     print("  BaseDrift, final outcome by scenario   (! marks a wrong outcome):")

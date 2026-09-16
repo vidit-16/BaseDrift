@@ -496,7 +496,7 @@ def main():
     beat(f"     answered: {case['callback_reaches_known_contact']}")
     beat()
     beat(f"  2  Rs 1 from {named.account_number if named else 'NOTHING QUALIFIES'}")
-    beat(f"     the system NAMES the account. The requester never chooses.")
+    beat("     the system NAMES the account. The requester never chooses.")
     beat(f"     {basis}")
     beat(f"     requester can send from: {controls or 'nothing'}")
     beat()

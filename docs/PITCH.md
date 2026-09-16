@@ -2,7 +2,7 @@
 
 ### A pre-authorization decision layer for outbound payments.
 
-**[← README](README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
+**[← README](../README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
 
 ---
 
@@ -252,7 +252,7 @@ status is exactly the failure mode it exists to prevent.
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency handling; document correlation; the inbox triage funnel and its
 MCP tool layer; the investigation agent; the operator dashboard; the case file
-and its server-side two-person rule; 303 tests across 9 suites.
+and its server-side two-person rule; 308 tests across 10 suites.
 
 **Simulated:** every RazorpayX boundary. Fund-account and vendor lookups stand
 in for API reads. Validation results are replayed schema-faithfully.
