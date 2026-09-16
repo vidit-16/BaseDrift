@@ -1,0 +1,29 @@
+[project]
+name = "basedrift"
+version = "0.1.0"
+description = "Pre-authorization decision layer for outbound payments: holds beneficiary changes whose authorization cannot be established."
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [".venv", "docs"]
+
+[tool.ruff.lint]
+# Correctness-focused: pyflakes, pycodestyle errors, bugbear.
+select = ["E", "F", "W", "B"]
+# B007/B904/B905: stylistic in this codebase (loop vars kept for readability,
+# exception chaining shown to users as plain messages, zips over equal-length
+# columns). E401: inline test-local imports.
+ignore = ["E501", "E402", "E731", "E741", "E401", "B007", "B904", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B023"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["src", "mcp"]

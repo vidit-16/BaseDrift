@@ -32,7 +32,7 @@ from extractor import ExtractionResult  # noqa: E402
 
 import casefile  # noqa: E402
 import webhook  # noqa: E402
-from decision_engine import ALLOW, BLOCK, STEP_UP, VendorRecord  # noqa: E402
+from decision_engine import ALLOW, STEP_UP, VendorRecord  # noqa: E402
 from webhook import (  # noqa: E402
     FundAccount, Store, handle_payout_pending, no_document_evidence,
     parse_payout_pending, verify_signature,
@@ -895,7 +895,7 @@ def test_the_case_shows_how_each_account_got_onto_the_file():
     screen inviting someone to eyeball it and conclude the request looks fine
     is the reasoning that attack defeats.
     """
-    from decision_engine import AccountRecord, VendorRecord
+    from decision_engine import AccountRecord
     import dataclasses
     store = make_store(dest_account=KNOWN_ACCT)
     # The fixture vendor deliberately carries no AccountRecords — most tests

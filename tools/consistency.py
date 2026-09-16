@@ -65,7 +65,8 @@ EXCLUDE = {"BUILD-LOG.md"}
 def docs():
     out = []
     for p in sorted(glob.glob(os.path.join(ROOT, "*.md"))
-                    + glob.glob(os.path.join(ROOT, "notes", "*.md"))):
+                    + glob.glob(os.path.join(ROOT, "docs", "*.md"))
+                    + glob.glob(os.path.join(ROOT, "docs", "notes", "*.md"))):
         rel = os.path.relpath(p, ROOT).replace("\\", "/")
         if os.path.basename(rel) in EXCLUDE:
             continue
@@ -117,7 +118,6 @@ def derived():
             return list(csv.DictReader(f))
 
     inbox = rows("data/inbox_dev.csv")
-    cr = sum(1 for r in inbox if r.get("is_change_request") == "True")
 
     sys.path.insert(0, os.path.join(ROOT, "src"))
     import extractor  # noqa: E402

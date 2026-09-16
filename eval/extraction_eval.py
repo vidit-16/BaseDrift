@@ -50,7 +50,7 @@ import llm_client  # noqa: E402
 import render as R  # noqa: E402
 import verifier  # noqa: E402
 from ablation import keyword_baseline  # noqa: E402
-from decision_engine import ALLOW, BLOCK, STEP_UP, FAVResult, decide  # noqa: E402
+from decision_engine import BLOCK, FAVResult, decide  # noqa: E402
 from rules_eval import load_cases, load_vendors, basedrift  # noqa: E402
 
 CACHE_DIR = os.path.join(HERE, ".extraction_cache")
@@ -345,7 +345,7 @@ def compute_outcomes(cases, extractions, rows_by_id, vendors, index):
         reached = row["callback_reaches_known_contact"] == "True"
         # The accounts the requester can actually send from. Which one gets
         # DEMANDED is the verifier's decision, not the dataset's — see
-        # BUILD-LOG.md V2.S on why the old single bool made that unmeasurable.
+        # docs/BUILD-LOG.md V2.S on why the old single bool made that unmeasurable.
         controls = [a for a in
                     (row.get("requester_controls_accounts") or "").split(";") if a]
         for tag, d, ctr in (("real", d_real, real), ("ideal", d_ideal, ideal)):

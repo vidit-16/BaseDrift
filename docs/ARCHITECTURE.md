@@ -7,7 +7,7 @@ can be established.
 
 This document is standalone. It assumes no prior reading of the README.
 
-**[← README](README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
+**[← README](../README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
 
 ---
 
@@ -271,7 +271,7 @@ data/generate_data.py    seeded generator; 900 labelled cases
 **Real and running:** the decision engine and its rule table; the semantic layer
 against a live model; the webhook handler including HMAC verification, replay
 and idempotency; document correlation; the triage funnel and its MCP tool layer;
-the operator dashboard, case file and two-person rule; 303 tests; six evaluators.
+the operator dashboard, case file and two-person rule; 308 tests; six evaluators.
 
 **Simulated:** every RazorpayX boundary. `Store` stands in for fund-account and
 vendor lookups that would be API reads. FAV results are replayed

@@ -10,10 +10,10 @@ once in the language an operator can act on, because nobody can act on
 holds the translation so the two can never drift.
 
 **The authoritative version is the module docstring of
-[`src/decision_engine.py`](src/decision_engine.py), and the code implements
+[`src/decision_engine.py`](../src/decision_engine.py), and the code implements
 exactly it.** This document is that table with its reasoning attached.
 
-**[← README](README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
+**[← README](../README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
 
 ---
 
@@ -440,7 +440,7 @@ hostile one cannot either.
 each of them in turn and checks that the suite notices. A mutation that
 survives means the guarantee is *described* rather than *enforced* — which is
 exactly how a compound guard was found to have two clauses, either of which
-could be deleted with all 303 tests still green.
+could be deleted with the whole suite still green.
 
 ---
 

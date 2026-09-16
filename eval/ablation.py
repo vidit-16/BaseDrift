@@ -304,7 +304,15 @@ def http_post(url, headers, payload, timeout=30, max_retries=4):
 
 
 def detect_model(api_key):
-    """Query Groq for available models, pick the best one we support."""
+    """Query the provider for available models, pick the best one we support.
+
+    BASEDRIFT_MODEL pins a model and skips detection, exactly as it does in
+    src/llm_client.py. Without this the ablation silently ignored the pin and
+    could measure a different model than the one the system was told to use.
+    """
+    pinned = os.environ.get("BASEDRIFT_MODEL", "").strip()
+    if pinned:
+        return pinned, None
     try:
         r = requests.get(MODELS_URL,
                          headers={"Authorization": f"Bearer {api_key}"},
@@ -482,7 +490,7 @@ def main():
     if err:
         print()
         print("!" * 76)
-        print(f"Could not reach Groq: {err}")
+        print(f"Could not reach the provider at {BASE_URL}: {err}")
         print()
         print("Most likely causes:")
         print("  - key is wrong or was revoked  -> make a new one at console.groq.com")

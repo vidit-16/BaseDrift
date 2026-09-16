@@ -13,4 +13,4 @@ runs.
 | [inbox-cursor.md](inbox-cursor.md) | Incremental inbox reads, and a security finding that changes what the cursor key has to be |
 | [mcp.md](mcp.md) | What the MCP layer actually is today, what it is not, and the transport decision that has not been made |
 
-**[← back to the project](../README.md)**
+**[← back to the project](../../README.md)**

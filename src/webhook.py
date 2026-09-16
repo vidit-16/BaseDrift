@@ -236,7 +236,7 @@ class Store:
             # No decision, no case to work. Without this, posting to an
             # arbitrary payout id would mint a case file for a payout that
             # does not exist — on an endpoint that has no authentication in
-            # front of it, that is unbounded growth for free. See COMPLIANCE.md
+            # front of it, that is unbounded growth for free. See docs/COMPLIANCE.md
             # section 3.
             raise PermissionError(
                 "No decision has been recorded for that payout, so there is "
@@ -842,7 +842,7 @@ def create_app(store: Optional[Store] = None, fav_lookup=None):
         Who the dashboard is acting as.
 
         A cookie, and deliberately not authentication. This demo has none —
-        COMPLIANCE.md lists it as production work — so the identity is chosen,
+        docs/COMPLIANCE.md lists it as production work — so the identity is chosen,
         not proven. What it does buy is that the two-person rule is exercised
         for real: the same browser cannot record a verification and then release
         the payment without switching, and switching is a visible act.

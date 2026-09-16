@@ -18,15 +18,13 @@ Run directly for a demo:
 import csv
 import json
 import os
-from dataclasses import asdict
 from typing import Optional, Dict, Any, Set
 
 import extractor
 import llm_client
-from extractor import ExtractionResult
 from decision_engine import (
-    decide, Decision, FAVResult, VendorRecord, AccountRecord,
-    ALLOW, STEP_UP, BLOCK,
+    decide, FAVResult, VendorRecord, AccountRecord,
+    STEP_UP, BLOCK,
 )
 import verifier
 

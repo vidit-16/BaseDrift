@@ -19,6 +19,7 @@ SUITES = [
     "test_triage_inbox.py",
     "test_casefile.py",
     "test_notifier.py",
+    "test_smoke.py",
 ]
 
 

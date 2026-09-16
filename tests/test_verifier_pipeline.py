@@ -90,10 +90,8 @@ def test_every_verify_call_site_in_the_repo_uses_the_current_signature():
     Signature changes are cheap to make and expensive to discover late. This
     finds them in under a second.
     """
-    import inspect
     import pathlib
 
-    valid = set(inspect.signature(verifier.verify).parameters)
     root = pathlib.Path(__file__).resolve().parent.parent
     pattern = re.compile(r"verify\((.*?)\)", re.S)
     removed = {"controls_existing_account"}
@@ -440,7 +438,7 @@ def test_a_passing_callback_cannot_release_a_recommended_rejection():
 
 def test_a_planted_account_cannot_clear_a_recommended_rejection():
     """
-    BUILD-LOG.md V2.6 in miniature. An attacker who once got an account onto the
+    docs/BUILD-LOG.md V2.6 in miniature. An attacker who once got an account onto the
     vendor master penny-drops from it, and channel 2 — the authoritative one —
     passes. A previous success used as the credential for the next one.
 

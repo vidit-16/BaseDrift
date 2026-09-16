@@ -36,7 +36,6 @@ snapshot is for people browsing on their own device, the running app is for the
 part you narrate.
 """
 
-import html
 import os
 import re
 import sys

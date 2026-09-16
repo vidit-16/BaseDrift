@@ -12,7 +12,6 @@ refuses, how claims are normalised, and the guarantee that extract() never
 raises no matter what comes back from the model.
 """
 
-import json
 import os
 import sys
 
@@ -327,7 +326,7 @@ def test_extract_survives_an_exception_anywhere_in_conversion():
 # ── Runner ───────────────────────────────────────────────────────────
 
 # ══ The provider boundary (V2.7) ══════════════════════════════════════
-# COMPLIANCE.md rests an argument on this: the pinned model is open-weight and
+# docs/COMPLIANCE.md rests an argument on this: the pinned model is open-weight and
 # llm_client is the only module that talks to a provider, so moving inference
 # in-country is a one-file change. These tests make that claim testable instead
 # of asserted.
