@@ -2,7 +2,7 @@
 
 ### A pre-authorization decision layer for outbound payments.
 
-**[← README](../README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
+**[← README](../README.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
 
 ---
 

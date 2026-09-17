@@ -1,13 +1,12 @@
 # BaseDrift — Evaluation
 
-How this system was measured, what the numbers mean, and — at greater length
-than is comfortable — what they cannot tell you.
+How this system was measured, what the numbers mean, and where they stop.
 
-The short version: **recall of 100% is a ceiling, not a result.** It says the
-corpus cannot fail, not that the system cannot. Everything below is an attempt
-to be precise about which claims rest on the data and which do not.
+**Recall of 100% is a ceiling, not a result.** It says the corpus cannot fail,
+not that the system cannot. Everything below separates the claims that rest on
+the data from the ones that do not.
 
-**[← README](../README.md)** · **[Findings](FINDINGS.md)** · **[Rulebook](RULEBOOK.md)** · **[Build log](BUILD-LOG.md)**
+**[← README](../README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
 
 ---
 

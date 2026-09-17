@@ -1,17 +1,20 @@
 # BaseDrift — Build log
 
-**The working record.** Every item attempted, what it measured, and — more
-often than is comfortable — what it turned out not to show.
+**The working record.** Every item attempted, what it measured, and what it
+turned out not to show.
 
-This is not a changelog. It is the file where a measurement that contradicted an
-assumption got written down instead of being quietly absorbed, which is why it
-is the longest document here and the one worth reading if you want to know
-whether the numbers elsewhere can be trusted.
+This is not a changelog. It is where a measurement that contradicted an
+assumption was written down instead of being quietly absorbed. That makes it the
+longest document here, and the one to read if you want to know whether the
+numbers elsewhere can be trusted.
+
+It is long on purpose, and nothing else depends on reading it: the rulebook,
+architecture and evaluation stand on their own.
 
 Entries are append-only and keep their original wording; where a later finding
 overturned an earlier one, both are present and the later one says so.
 
-**[← README](../README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Build log](BUILD-LOG.md)** · **[Compliance](COMPLIANCE.md)**
+**[← README](../README.md)** · **[Pitch](PITCH.md)** · **[Rulebook](RULEBOOK.md)** · **[Architecture](ARCHITECTURE.md)** · **[Evaluation](EVALUATION.md)** · **[What broke](FINDINGS.md)** · **[Compliance](COMPLIANCE.md)**
 
 ---
 
